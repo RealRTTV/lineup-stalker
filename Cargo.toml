@@ -1,0 +1,30 @@
+[package]
+name = "lineup-stalker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+strip = true
+lto = "fat"
+panic = "abort"
+
+[profile.release.build-override]
+opt-level = 3
+strip = true
+debug = false
+debug-assertions = false
+overflow-checks = false
+incremental = true
+codegen-units = 1
+
+[dependencies]
+serde_json = "1.0.107"
+ureq = { version = "2.7.1", features = ["json"] }
+chrono = "0.4.31"
+chrono-tz = "0.8.3"
+anyhow = "1.0.75"
+fxhash = "0.2.1"

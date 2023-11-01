@@ -137,19 +137,23 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
         (home_pitcher_line, home_pitcher_id),
         previous_team_loadout,
     ) = lines(&response, home, game_id)?;
-    println!("# {} {title}", datetime.format("%m*|*%d*|*%y"));
-    println!("First Pitch: {time}");
+    let mut out = String::new();
+    writeln!(out, "# {} {title}", datetime.format("%m*|*%d*|*%y"))?;
+    writeln!(out, "First Pitch: {time}")?;
     if let Some(previous) = previous {
-        println!("Previous Game: {previous}");
+        writeln!(out, "Previous Game: {previous}")?;
     }
-    println!("Record Against: {record}");
-    println!("Standings: {standings}");
-    println!("### __Starting Pitchers__");
-    println!("{away_pitcher_line}");
-    println!("{home_pitcher_line}");
-    println!("### __Starting Lineup (.AVG *|* .SLG)__");
-    print_last_lineup_underscored(&previous_team_loadout)?;
-    println!("> (comment)\n");
+    writeln!(out, "Record Against: {record}")?;
+    writeln!(out, "Standings: {standings}")?;
+    writeln!(out, "### __Starting Pitchers__")?;
+    writeln!(out, "{away_pitcher_line}")?;
+    writeln!(out, "{home_pitcher_line}")?;
+    writeln!(out, "### __Starting Lineup (.AVG *|* .SLG)__")?;
+    let lines_before_lineup = out.split("\n").count() - 1;
+    write_last_lineup_underscored(&mut out, &previous_team_loadout)?;
+    write!(out, "> ")?;
+    println!("{out}\n\n\n");
+    cli_clipboard::set_contents(out.clone()).map_err(|_| anyhow!("Failed to set clipboard"))?;
     {
         let mut dots = 0;
         SetConsoleCursorInfo(
@@ -185,13 +189,19 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
             &ConsoleCursorInfo::new(1, true),
         );
     }
-    SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 9 });
+    SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 8 });
     {
         let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], &previous_team_loadout)?;
-        print!("{lineup}");
+        let mut lines = out.split("\n").map(str::to_owned).collect::<Vec<_>>();
+        for (idx, line) in lineup.split("\n").map(str::to_owned).enumerate() {
+            println!("{line}");
+            lines[lines_before_lineup + idx] = line;
+        }
+        out = lines.join("\n");
+        cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
         let _ = std::io::Write::flush(&mut stdout())?;
     }
-    SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 19 });
+    SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 18 });
     print!("\n\n");
     SetForegroundWindow(hwnd);
     post_lineup(
@@ -285,6 +295,7 @@ unsafe fn post_lineup(
                                 away_pitcher_id = pitching_substitution.new_id;
                             }
                             pitching_substitution.dbg_print();
+                            cli_clipboard::set_contents(format!("{pitching_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             println!("\n\n");
                             play_idx += 1;
                         }
@@ -303,7 +314,8 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{offensive_substitution:?}\n\n");
+                            println!("{offensive_substitution:?}\n\n\n");
+                            cli_clipboard::set_contents(format!("{offensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             play_idx += 1;
                         }
                         "defensive_substitution" => {
@@ -321,7 +333,8 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{defensive_substitution:?}\n\n");
+                            println!("{defensive_substitution:?}\n\n\n");
+                            cli_clipboard::set_contents(format!("{defensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             play_idx += 1;
                         }
                         "defensive_switch" => {
@@ -340,6 +353,7 @@ unsafe fn post_lineup(
                                 &id_to_object,
                             )?;
                             println!("{defensive_switch:?}\n\n");
+                            cli_clipboard::set_contents(format!("{defensive_switch:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             play_idx += 1;
                         }
                         "passed_ball" | "wild_pitch"
@@ -360,6 +374,7 @@ unsafe fn post_lineup(
                                 "Wild pitch",
                             )?;
                             println!("{passed_ball:?}\n\n");
+                            cli_clipboard::set_contents(format!("{passed_ball:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             writeln!(&mut scoring_plays, "{passed_ball}")?;
                             play_idx += 1;
                         }
@@ -377,6 +392,7 @@ unsafe fn post_lineup(
                                 "Stolen base",
                             )?;
                             println!("{stolen_home:?}\n\n");
+                            cli_clipboard::set_contents(format!("{stolen_home:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             writeln!(&mut scoring_plays, "{stolen_home}")?;
                             play_idx += 1;
                         }
@@ -411,6 +427,7 @@ unsafe fn post_lineup(
             )?;
             println!("{scoring:?}\n\n");
             writeln!(&mut scoring_plays, "{scoring}")?;
+            cli_clipboard::set_contents(format!("{scoring:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
             play_idx += 1;
         }
 
@@ -535,17 +552,21 @@ unsafe fn post_lineup(
                     record.add_newer_loss();
                 }
 
-                println!("## Final Score");
-                println!("{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}");
-                println!("Standings: {standings}");
-                println!("Record Against: {record}");
-                println!("### __Line Score__");
-                println!("{header}");
-                println!("{away_linescore}");
-                println!("{home_linescore}");
-                println!("### __Scoring Plays__");
-                println!("{scoring_plays}");
-                println!("> (comment)");
+                let mut out = String::new();
+                writeln!(out, "## Final Score")?;
+                writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}")?;
+                writeln!(out, "Standings: {standings}")?;
+                writeln!(out, "Record Against: {record}")?;
+                writeln!(out, "### __Line Score__")?;
+                writeln!(out, "{header}")?;
+                writeln!(out, "{away_linescore}")?;
+                writeln!(out, "{home_linescore}")?;
+                writeln!(out, "### __Scoring Plays__")?;
+                writeln!(out, "{scoring_plays}")?;
+                write!(out, "> ")?;
+
+                println!("{out}");
+                cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
 
                 loop {
                     std::thread::sleep(Duration::new(u64::MAX, 0));
@@ -726,7 +747,7 @@ impl Debug for ScoringPlayEvent {
             writeln!(f, "{score:?}")?;
         }
 
-        write!(f, "\n(comment)")?;
+        write!(f, "\n")?;
 
         Ok(())
     }
@@ -843,7 +864,7 @@ impl Debug for OffensiveSubstitution {
                     n = nth(*inning as usize)
                 )?;
                 writeln!(f, "")?;
-                writeln!(f, "(comment)")?;
+                writeln!(f, "")?;
             }
             OffensiveSubstitution::PinchHitter {
                 old,
@@ -863,7 +884,7 @@ impl Debug for OffensiveSubstitution {
                     n = nth(*inning as usize)
                 )?;
                 writeln!(f, "")?;
-                writeln!(f, "(comment)")?;
+                writeln!(f, "")?;
             }
         }
 
@@ -953,7 +974,7 @@ impl Debug for DefensiveSwitch {
             n = nth(*inning as usize)
         )?;
         writeln!(f, "")?;
-        writeln!(f, "(comment)")?;
+        writeln!(f, "")?;
 
         Ok(())
     }
@@ -1010,7 +1031,7 @@ impl Debug for DefensiveSubstitution {
             n = nth(*inning as usize)
         )?;
         writeln!(f, "")?;
-        writeln!(f, "(comment)")?;
+        writeln!(f, "")?;
 
         Ok(())
     }
@@ -1131,7 +1152,42 @@ impl PitchingSubstitution {
         println!("\n> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeouts}** K");
         println!("> Pitch Count: **{pitches}**");
         println!();
-        println!("(comment)");
+        print!("");
+    }
+}
+
+impl Debug for PitchingSubstitution {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            old,
+            old_era,
+            new,
+            new_era,
+            new_id: _,
+            abbreviation,
+            innings_pitched,
+            hits,
+            earned_runs,
+            walks,
+            strikeouts,
+            pitches,
+        } = self;
+        let quality_start = innings_pitched.split_once(".").expect("IP didn't have a .").0.parse::<usize>().expect("Integer IP part wasn't valid") >= 6 && *earned_runs <= 3;
+        writeln!(f, "### [{abbreviation} Pitching Change] | {new} ({new_era:.2} ERA) replaces {old} ({old_era:.2} ERA).")?;
+        if quality_start {
+            write!(f, ":star: ")?;
+        }
+        write!(f,
+            "__{last_name}'s Final Line__:",
+            last_name = self.old.rsplit_once(' ').map_or(&*self.old, |(_, x)| x)
+        )?;
+        if quality_start {
+            write!(f, " :star:")?;
+        }
+        writeln!(f, "\n> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeouts}** K")?;
+        writeln!(f, "> Pitch Count: **{pitches}**")?;
+        writeln!(f)?;
+        write!(f, "")
     }
 }
 
@@ -1352,7 +1408,7 @@ impl Debug for ScoringPlay {
             writeln!(f, "{score:?}")?
         }
 
-        write!(f, "\n(comment)")?;
+        write!(f, "\n")?;
 
         Ok(())
     }
@@ -1998,22 +2054,22 @@ fn hide(s: &str) -> String {
     s.chars().map(|x| if x.is_ascii_whitespace() { ' ' } else { '_' }).collect::<String>()
 }
 
-fn print_last_lineup_underscored(previous_loadout: &Value) -> Result<()> {
+fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value) -> Result<()> {
     let players = &previous_loadout["players"];
     let vec = match previous_loadout["battingOrder"].as_array() {
         Some(iter) => iter.iter().filter_map(|id| id.as_i64()).filter_map(|x| players[&format!("ID{x}")]["person"]["fullName"].as_str()).map(hide).collect::<Vec<String>>(),
         None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Melky Cabrera"), hide("Tony Castillo"), hide("Robin Yount")],
     };
     let [a, b, c, d, e, f, g, h, i] = vec.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
-    println!("1 - {a} [__] [.--- *|* .---]");
-    println!("2 - {b} [__] [.--- *|* .---]");
-    println!("3 - {c} [__] [.--- *|* .---]");
-    println!("4 - {d} [__] [.--- *|* .---]");
-    println!("5 - {e} [__] [.--- *|* .---]");
-    println!("6 - {f} [__] [.--- *|* .---]");
-    println!("7 - {g} [__] [.--- *|* .---]");
-    println!("8 - {h} [__] [.--- *|* .---]");
-    println!("9 - {i} [__] [.--- *|* .---]");
+    writeln!(out, "1 - {a} [__] [.--- *|* .---]")?;
+    writeln!(out, "2 - {b} [__] [.--- *|* .---]")?;
+    writeln!(out, "3 - {c} [__] [.--- *|* .---]")?;
+    writeln!(out, "4 - {d} [__] [.--- *|* .---]")?;
+    writeln!(out, "5 - {e} [__] [.--- *|* .---]")?;
+    writeln!(out, "6 - {f} [__] [.--- *|* .---]")?;
+    writeln!(out, "7 - {g} [__] [.--- *|* .---]")?;
+    writeln!(out, "8 - {h} [__] [.--- *|* .---]")?;
+    writeln!(out, "9 - {i} [__] [.--- *|* .---]")?;
     Ok(())
 }
 

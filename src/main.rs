@@ -2051,7 +2051,7 @@ fn real_abbreviation(parent: &Value) -> Result<String> {
 }
 
 fn hide(s: &str) -> String {
-    s.chars().map(|x| if x.is_ascii_whitespace() { ' ' } else { '_' }).collect::<String>()
+    s.chars().map(|x| if x.is_ascii_whitespace() { "" } else { r"\_" }).collect::<String>()
 }
 
 fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value) -> Result<()> {
@@ -2061,15 +2061,15 @@ fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value) -> 
         None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Melky Cabrera"), hide("Tony Castillo"), hide("Robin Yount")],
     };
     let [a, b, c, d, e, f, g, h, i] = vec.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
-    writeln!(out, "1 - {a} [__] [.--- *|* .---]")?;
-    writeln!(out, "2 - {b} [__] [.--- *|* .---]")?;
-    writeln!(out, "3 - {c} [__] [.--- *|* .---]")?;
-    writeln!(out, "4 - {d} [__] [.--- *|* .---]")?;
-    writeln!(out, "5 - {e} [__] [.--- *|* .---]")?;
-    writeln!(out, "6 - {f} [__] [.--- *|* .---]")?;
-    writeln!(out, "7 - {g} [__] [.--- *|* .---]")?;
-    writeln!(out, "8 - {h} [__] [.--- *|* .---]")?;
-    writeln!(out, "9 - {i} [__] [.--- *|* .---]")?;
+    writeln!(out, r"1 - {a} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"2 - {b} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"3 - {c} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"4 - {d} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"5 - {e} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"6 - {f} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"7 - {g} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"8 - {h} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"9 - {i} [\_\_] [.--- *|* .---]")?;
     Ok(())
 }
 

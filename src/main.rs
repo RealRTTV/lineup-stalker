@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use chrono_tz::Tz;
-use chrono_tz::Tz::Canada__Eastern;
+use chrono_tz::Tz::America__Toronto;
 use fxhash::FxHashMap;
 use serde_json::Value;
 
@@ -19,7 +19,7 @@ use crate::posts::offensive_substitution::OffensiveSubstitution;
 use crate::posts::pitching_substitution::PitchingSubstitution;
 use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
-use crate::util::{clear_screen, last_name};
+use crate::util::{clear_screen, get_local_team, last_name};
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
@@ -37,6 +37,8 @@ pub mod posts {
 }
 
 fn main() {
+    clear_screen(128);
+    unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
     loop {
         if let Err(e) = unsafe { main0(GetConsoleWindow().cast()) } {
             eprintln!("Error while stalking lineup: {e}");
@@ -50,11 +52,12 @@ fn main() {
 }
 
 unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
+    let local_team = get_local_team();
     SetConsoleCursorInfo(
         GetStdHandle(-11_i32 as u32),
         &ConsoleCursorInfo::new(1, false),
     );
-    let (id, home) = get_id()?;
+    let (id, home) = get_id(local_team)?;
     let url = format!("https://statsapi.mlb.com/api/v1.1/game/{id}/feed/live");
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 });
     let mut response =
@@ -63,7 +66,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
             .context(anyhow!("Initial URL request failed ({url})"))?
             .into_json::<Value>().context("Initial URL Request did not return valid json")?;
     let utc = DateTime::<Utc>::from_str(response["gameData"]["datetime"]["dateTime"].as_str().context("Game Date Time didn't exist")?)?.naive_utc();
-    let datetime = Canada__Eastern.from_utc_datetime(&utc);
+    let datetime = America__Toronto.from_utc_datetime(&utc);
     let local_datetime = Tz::from_str(response["gameData"]["venue"]["timeZone"]["id"].as_str().context("Could not find venue's local time zone for game")?).map_err(|e| anyhow!("{e}"))?.from_utc_datetime(&utc);
     let time = if datetime.naive_local() == local_datetime.naive_local() {
         format!("{}", datetime.format("%H:%M %Z"))
@@ -160,8 +163,8 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     Ok(())
 }
 
-fn get_id() -> Result<(usize, bool)> {
-    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, default_color: u16) -> Result<()> {
+fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool)> {
+    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, local_team: Option<&'static str>, default_color: u16) -> Result<()> {
         let idx = idx + 1;
         let home = game["teams"]["home"]["team"]["name"]
             .as_str()
@@ -174,7 +177,7 @@ fn get_id() -> Result<(usize, bool)> {
                 .as_str()
                 .context("Game Date didn't exist")?,
         )?;
-        if home == "Toronto Blue Jays" || away == "Toronto Blue Jays" {
+        if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
             unsafe {
                 SetConsoleTextAttribute(handle, 3);
             }
@@ -185,7 +188,7 @@ fn get_id() -> Result<(usize, bool)> {
         }
         println!(
             "  {idx: >idx_width$}. {home} vs. {away} @ {}",
-            Canada__Eastern
+            America__Toronto
                 .from_local_datetime(&time.naive_local())
                 .latest()
                 .context("Error converting to Canada Eastern Timezone")?
@@ -219,7 +222,7 @@ fn get_id() -> Result<(usize, bool)> {
         println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
         for (idx, game) in games.iter().enumerate() {
             ids.push(game["gamePk"].as_i64().context("Game ID didn't exist")?);
-            print_game(game, idx, handle, idx_width, 7)?;
+            print_game(game, idx, handle, idx_width, local_team, 7)?;
         }
         unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
         print!("> ");
@@ -252,6 +255,8 @@ fn get_id() -> Result<(usize, bool)> {
                         .context("Error when getting previous date")?;
                     clear_screen(ids.len() + 2);
                     unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                    println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                    unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                     continue 'a;
                 } else if second == 0x4D {
                     idx = 0;
@@ -260,15 +265,18 @@ fn get_id() -> Result<(usize, bool)> {
                         .context("Error when getting next date")?;
                     clear_screen(ids.len() + 2);
                     unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                    println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                    unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                     continue 'a;
                 } else {
                     println!("{second:x}");
                     loop {}
                 }
-            } else if first == 0x0D {
+            } else if first == 0x0D && !games.is_empty() {
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
                 for (idx, game) in games.iter().enumerate() {
-                    print_game(game, idx, handle, idx_width, 8)?;
+                    print_game(game, idx, handle, idx_width, local_team, 8)?;
+                    std::thread::sleep(Duration::from_millis(35 - idx as u64));
                 }
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 println!("[{}] Please select the home team or away team (use arrows for switching):                                \n", date.format("%m/%d/%Y"));
@@ -285,18 +293,18 @@ fn get_id() -> Result<(usize, bool)> {
                         .as_str()
                         .context("Game Date didn't exist")?,
                 )?;
-                if home == "Toronto Blue Jays" || away == "Toronto Blue Jays" {
+                if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
                     unsafe { SetConsoleTextAttribute(handle, 3); }
                 }
                 println!(
                     "> {home} vs. {away} @ {}                                ",
-                    Canada__Eastern
+                    America__Toronto
                         .from_local_datetime(&time.naive_local())
                         .latest()
-                        .context("Error converting to Canada Eastern Timezone")?
+                        .context("Error converting to America Toronto Timezone")?
                         .format("%H:%M %Z")
                 );
-                if home == "Toronto Blue Jays" || away == "Toronto Blue Jays" {
+                if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
                     unsafe { SetConsoleTextAttribute(handle, 7); }
                 }
                 print!("  {home_underline}                                                                \r", home_underline = "^".repeat(home.len()));
@@ -388,21 +396,17 @@ unsafe fn post_lineup(
                 .as_array()
                 .unwrap()
             {
-                if play_event["type"]
-                    .as_str().unwrap()
-                    == "action"
-                {
+                if play_event["type"].as_str().unwrap() == "pitch" {
+                    if away {
+                        away_receiving_pitches += 1;
+                    } else {
+                        home_receiving_pitches += 1;
+                    }
+                } else if play_event["type"].as_str().unwrap() == "action" {
                     match play_event["details"]["eventType"]
                         .as_str()
                         .unwrap()
                     {
-                        "pitch" => {
-                            if away {
-                                away_receiving_pitches += 1;
-                            } else {
-                                home_receiving_pitches += 1;
-                            }
-                        }
                         "pitching_substitution" => {
                             if play_idx < previous_play_end {
                                 play_idx += 1;
@@ -427,9 +431,8 @@ unsafe fn post_lineup(
                                 away_pitchers += "/";
                                 away_pitchers += pitching_substitution.last_name();
                             }
-                            println!("{pitching_substitution:?}\n\n\n");
+                            println!("{pitching_substitution:?}\n\n");
                             cli_clipboard::set_contents(format!("{pitching_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
-                            println!("\n\n");
                             play_idx += 1;
                         }
                         "offensive_substitution" => {
@@ -447,7 +450,7 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{offensive_substitution:?}\n\n\n");
+                            println!("{offensive_substitution:?}\n\n");
                             cli_clipboard::set_contents(format!("{offensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             play_idx += 1;
                         }
@@ -466,7 +469,7 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{defensive_substitution:?}\n\n\n");
+                            println!("{defensive_substitution:?}\n\n");
                             cli_clipboard::set_contents(format!("{defensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
                             play_idx += 1;
                         }
@@ -543,14 +546,14 @@ unsafe fn post_lineup(
             let desc = play["result"]["description"]
                 .as_str()
                 .unwrap();
-            if let Some("walk" | "intent_walk") = play["eventType"].as_str() {
+            if let Some("walk" | "intent_walk") = play["result"]["eventType"].as_str() {
                 if away {
                     away_walks += 1;
                 } else {
                     home_walks += 1;
                 }
             }
-            if play["eventType"].as_str() == Some("strikeout") {
+            if play["result"]["eventType"].as_str() == Some("strikeout") {
                 if away {
                     away_strikeouts += 1;
                 } else {
@@ -565,7 +568,6 @@ unsafe fn post_lineup(
                 play_idx += 1;
                 continue;
             }
-            // intentionally break early here so next-time we rescan this
             let scoring = ScoringPlay::from_play(
                 play,
                 &home_abbreviation,
@@ -713,7 +715,7 @@ unsafe fn post_lineup(
                         if let Some(home_masterpiece_kind) = home_masterpiece_kind {
                             writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {away_strikeouts} K", innings_count = innings.len())?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | **{away_strikeouts}** K", innings_count = innings.len())?;
                             writeln!(out, "> Pitch Count: **{away_receiving_pitches}**")?;
                         }
                     }
@@ -737,7 +739,7 @@ unsafe fn post_lineup(
                         if let Some(away_masterpiece_kind) = away_masterpiece_kind {
                             writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {home_strikeouts} K", innings_count = innings.len())?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | **{home_strikeouts}** K", innings_count = innings.len())?;
                             writeln!(out, "> Pitch Count: **{home_receiving_pitches}**")?;
                         }
                     }

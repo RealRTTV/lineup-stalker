@@ -1,5 +1,6 @@
 use core::fmt::Write;
-use crate::util::ffi::{Coordinate, GetStdHandle, SetConsoleCursorPosition};
+use std::ffi::CStr;
+use crate::util::ffi::{Coordinate, GetStdHandle, GetTimeZoneInformation, SetConsoleCursorPosition};
 
 pub mod ffi;
 pub mod statsapi;
@@ -40,4 +41,21 @@ pub fn clear_screen(height: usize) {
 
 pub fn hide(s: &str) -> String {
     s.chars().map(|x| if x.is_ascii_whitespace() { " " } else { r"\_" }).collect::<String>()
+}
+
+// not possible without windows
+pub fn get_local_team() -> Option<&'static str> {
+    let mut time_zone_information = core::mem::MaybeUninit::uninit();
+    let kind = unsafe { GetTimeZoneInformation(time_zone_information.as_mut_ptr()) };
+    let time_zone_information = unsafe { time_zone_information.assume_init() };
+    let name_wide = if kind == 1 { time_zone_information.standard_name } else { time_zone_information.daylight_name };
+    let name = {
+        let mut array = [0_u8; 32];
+        for (idx, &val) in name_wide.iter().enumerate() {
+            array[idx] = val as u8;
+        }
+        array
+    };
+    let _timezone = CStr::from_bytes_until_nul(&name).ok()?.to_str().ok()?;
+    Some("Toronto Blue Jays")
 }

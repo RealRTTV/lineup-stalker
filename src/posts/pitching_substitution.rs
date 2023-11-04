@@ -107,7 +107,9 @@ impl Debug for PitchingSubstitution {
         write!(f, "__{last_name}'s Final Line__:", last_name = self.last_name())?;
         writeln!(f, "\n> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeouts}** K")?;
         writeln!(f, "> Pitch Count: **{pitches}**")?;
-        writeln!(f)?;
-        write!(f, "")
+        writeln!(f, "")?;
+        writeln!(f, "")?;
+
+        Ok(())
     }
 }

@@ -9,7 +9,7 @@ edition = "2021"
 opt-level = 3
 codegen-units = 1
 strip = true
-lto = "fat"
+lto = true
 panic = "abort"
 
 [profile.release.build-override]

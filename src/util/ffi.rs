@@ -16,6 +16,29 @@ impl ConsoleCursorInfo {
 }
 
 #[repr(C)]
+pub struct SystemTime {
+    pub year: u16,
+    pub month: u16,
+    pub day_of_week: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+    pub milliseconds: u16,
+}
+
+#[repr(C)]
+pub struct TimeZoneInformation {
+    pub bias: u32,
+    pub standard_name: [u16; 32],
+    pub standard_date: SystemTime,
+    pub standard_bias: u32,
+    pub daylight_name: [u16; 32],
+    pub daylight_date: SystemTime,
+    pub daylight_bias: u32,
+}
+
+#[repr(C)]
 pub struct Coordinate {
     pub x: i16,
     pub y: i16,
@@ -34,6 +57,9 @@ extern "system" {
 
     #[must_use]
     pub fn GetConsoleWindow() -> *mut c_void;
+
+    #[must_use]
+    pub fn GetTimeZoneInformation(ptr: *mut TimeZoneInformation) -> i32;
 }
 
 #[link(name = "msvcrt")]

@@ -26,6 +26,6 @@ serde_json = "1.0.107"
 ureq = { version = "2.7.1", features = ["json"] }
 chrono = "0.4.31"
 chrono-tz = "0.8.3"
-anyhow = "1.0.75"
+anyhow = { version = "1.0.75", default-features = false, features = ["std"] }
 fxhash = "0.2.1"
 cli-clipboard = "0.4.0"

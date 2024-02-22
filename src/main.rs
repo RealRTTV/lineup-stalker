@@ -7,7 +7,7 @@ use std::io::{stderr, stdout};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{Datelike, DateTime, Local, TimeZone, Utc};
 use chrono_tz::Tz;
 use chrono_tz::Tz::America__Toronto;
 use fxhash::FxHashMap;
@@ -23,6 +23,7 @@ use crate::util::{clear_screen, get_local_team, last_name};
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
+use crate::util::stat::HittingStat;
 use crate::util::statsapi::{era, lineup, real_abbreviation, title, write_last_lineup_underscored};
 
 pub mod util;
@@ -57,7 +58,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
         GetStdHandle(-11_i32 as u32),
         &ConsoleCursorInfo::new(1, false),
     );
-    let (id, home) = get_id(local_team)?;
+    let (id, home, first_stat, second_stat) = get_id(local_team)?;
     let url = format!("https://statsapi.mlb.com/api/v1.1/game/{id}/feed/live");
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 });
     let mut response =
@@ -96,7 +97,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     writeln!(out, "### __Starting Pitchers__")?;
     writeln!(out, "{away_pitcher_line}")?;
     writeln!(out, "{home_pitcher_line}")?;
-    writeln!(out, "### __Starting Lineup (.AVG *|* .SLG)__")?;
+    writeln!(out, "### __Starting Lineup (.{first_stat_value} *|* .{second_stat_value})__", first_stat_value = first_stat.to_string(), second_stat_value = second_stat.to_string())?;
     let lines_before_lineup = out.split("\n").count() - 1;
     write_last_lineup_underscored(&mut out, &previous_team_loadout)?;
     write!(out, "> ")?;
@@ -139,7 +140,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     }
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: lines_before_lineup as i16 });
     {
-        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], &previous_team_loadout)?;
+        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], &previous_team_loadout, first_stat, second_stat)?;
         let mut lines = out.split("\n").map(str::to_owned).collect::<Vec<_>>();
         for (idx, line) in lineup.split("\n").map(str::to_owned).enumerate() {
             println!("{line}");
@@ -163,7 +164,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     Ok(())
 }
 
-fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool)> {
+fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat, HittingStat)> {
     fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, local_team: Option<&'static str>, default_color: u16) -> Result<()> {
         let idx = idx + 1;
         let home = game["teams"]["home"]["team"]["name"]
@@ -230,7 +231,71 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool)> {
         unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
         loop {
             let first = unsafe { _getch() };
-            if first == 0xE0 {
+            if first == 0x33 {
+                idx = 0;
+                date = date.with_month(3).context("Error when setting month to march")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x34 {
+                idx = 0;
+                date = date.with_month(4).context("Error when setting month to april")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x35 {
+                idx = 0;
+                date = date.with_month(5).context("Error when setting month to may")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x36 {
+                idx = 0;
+                date = date.with_month(6).context("Error when setting month to june")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x37 {
+                idx = 0;
+                date = date.with_month(7).context("Error when setting month to july")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x38 {
+                idx = 0;
+                date = date.with_month(8).context("Error when setting month to august")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x39 {
+                idx = 0;
+                date = date.with_month(9).context("Error when setting month to september")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0x30 {
+                idx = 0;
+                date = date.with_month(10).context("Error when setting month to october")?;
+                clear_screen(ids.len() + 2);
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                continue 'a;
+            } else if first == 0xE0 {
                 let second = unsafe { _getch() };
                 if second == 0x48 {
                     unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: idx as i16 + 2 }); }
@@ -322,7 +387,63 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool)> {
                         }
                     } else if first == 0x0D {
                         clear_screen(ids.len() + 2);
-                        return Ok((ids[idx] as usize, is_home))
+                        unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+                        println!("[{}] Please select hitting stats (use arrows):                                \n", date.format("%m/%d/%Y"));
+                        let mut stats = [HittingStat::AVG, HittingStat::OPS];
+                        let mut selected_stat_idx = 0_usize;
+                        loop {
+                            unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
+                            {
+                                unsafe { SetConsoleTextAttribute(handle, 8); }
+                                print!("  ");
+                                for (idx, stat) in stats.iter().enumerate() {
+                                    print!("{prev: ^width$}", prev = stat.prev().to_string(), width = HittingStat::MAX_NAME_WIDTH);
+                                    if idx + 1 < stats.len() {
+                                        print!(" | ");
+                                    }
+                                }
+                                println!();
+
+                            }
+                            {
+                                unsafe { SetConsoleTextAttribute(handle, 7); }
+                                print!("{arrow} ", arrow = if selected_stat_idx == 0 { '>' } else { ' ' });
+                                for (idx, stat) in stats.iter().enumerate() {
+                                    print!("{stat: ^width$}", stat = stat.to_string(), width = HittingStat::MAX_NAME_WIDTH);
+                                    if idx + 1 < stats.len() {
+                                        print!(" | ");
+                                    }
+                                }
+                                print!(" {arrow}", arrow = if selected_stat_idx == 1 { '<' } else { ' ' });
+                                println!();
+                            }
+                            {
+                                unsafe { SetConsoleTextAttribute(handle, 8); }
+                                print!("  ");
+                                for (idx, stat) in stats.iter().enumerate() {
+                                    print!("{next: ^width$}", next = stat.next().to_string(), width = HittingStat::MAX_NAME_WIDTH);
+                                    if idx + 1 < stats.len() {
+                                        print!(" | ");
+                                    }
+                                }
+                                println!();
+                                unsafe { SetConsoleTextAttribute(handle, 7); }
+                            }
+                            let first = unsafe { _getch() };
+                            if first == 0xE0 {
+                                let second = unsafe { _getch() };
+                                if second == 0x4B || second == 0x4D {
+                                    selected_stat_idx = 1 - selected_stat_idx;
+                                } else if second == 0x48 {
+                                    stats[selected_stat_idx] = stats[selected_stat_idx].prev();
+                                } else if second == 0x50 {
+                                    stats[selected_stat_idx] = stats[selected_stat_idx].next();
+                                }
+                            } else if first == 0x0D {
+                                clear_screen(5);
+                                return Ok((ids[idx] as usize, is_home, stats[0], stats[1]))
+                            }
+                        }
                     }
                 }
             }

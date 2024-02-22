@@ -2,6 +2,7 @@ use core::fmt::{Debug, Display, Formatter, Write};
 use anyhow::{Result, Context, anyhow};
 use serde_json::Value;
 use crate::util::hide;
+use crate::util::stat::HittingStat;
 
 pub struct Score {
     play: String,
@@ -152,7 +153,7 @@ pub fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value)
     Ok(())
 }
 
-pub fn lineup(root: &Value, prev: &Value) -> Result<String> {
+pub fn lineup(root: &Value, prev: &Value, first_stat: HittingStat, second_stat: HittingStat) -> Result<String> {
     let mut players = Vec::new();
     for (key, player) in root["players"]
         .as_object()
@@ -183,13 +184,9 @@ pub fn lineup(root: &Value, prev: &Value) -> Result<String> {
                 .as_str()
                 .context("Hitter's first position didn't exist")?,
         );
-        let avg = player["seasonStats"]["batting"]["avg"]
-            .as_str()
-            .context("Hitter's avg didn't exist")?;
-        let slg = player["seasonStats"]["batting"]["slg"]
-            .as_str()
-            .context("Hitter's slg didn't exist")?;
-        let stats = format!("({avg} *|* {slg})");
+        let first_stat = first_stat.get(&player["seasonStats"]["batting"])?;
+        let second_stat = second_stat.get(&player["seasonStats"]["batting"])?;
+        let stats = format!("({first_stat} *|* {second_stat})");
         let changed_order = prev_batting_order.map_or(true, |prev_batting_order| {
             prev_batting_order != batting_order
         });

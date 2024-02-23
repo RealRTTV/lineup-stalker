@@ -4,6 +4,8 @@ use core::ffi::c_void;
 use core::fmt::Write;
 use core::str::FromStr;
 use std::io::{stderr, stdout};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -21,10 +23,13 @@ use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
 use crate::util::{clear_screen, get_local_team, last_name};
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
+use crate::util::next_game::NextGame;
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
 use crate::util::stat::HittingStat;
-use crate::util::statsapi::{era, lineup, real_abbreviation, title, write_last_lineup_underscored};
+use crate::util::statsapi::{era, lineup, real_abbreviation, write_last_lineup_underscored};
+
+pub const TIMEZONE: Tz = America__Toronto;
 
 pub mod util;
 
@@ -38,17 +43,15 @@ pub mod posts {
 }
 
 fn main() {
-    clear_screen(128);
-    unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
     loop {
+        clear_screen(128);
+        unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
         if let Err(e) = unsafe { main0(GetConsoleWindow().cast()) } {
             eprintln!("Error while stalking lineup: {e}");
-            eprint!("Press any key to continue... ");
-            let _ = std::io::Write::flush(&mut stderr());
-            unsafe { _getch() };
-            clear_screen(128);
-            unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
         }
+        eprint!("\nPress any key to continue... ");
+        let _ = std::io::Write::flush(&mut stderr());
+        unsafe { _getch() };
     }
 }
 
@@ -67,7 +70,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
             .context(anyhow!("Initial URL request failed ({url})"))?
             .into_json::<Value>().context("Initial URL Request did not return valid json")?;
     let utc = DateTime::<Utc>::from_str(response["gameData"]["datetime"]["dateTime"].as_str().context("Game Date Time didn't exist")?)?.naive_utc();
-    let datetime = America__Toronto.from_utc_datetime(&utc);
+    let datetime = TIMEZONE.from_utc_datetime(&utc);
     let local_datetime = Tz::from_str(response["gameData"]["venue"]["timeZone"]["id"].as_str().context("Could not find venue's local time zone for game")?).map_err(|e| anyhow!("{e}"))?.from_utc_datetime(&utc);
     let time = if datetime.naive_local() == local_datetime.naive_local() {
         format!("{}", datetime.format("%H:%M %Z"))
@@ -82,6 +85,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
         previous,
         record,
         standings,
+        next_game,
         (away_pitcher_line, away_pitcher_id),
         (home_pitcher_line, home_pitcher_id),
         previous_team_loadout,
@@ -103,13 +107,30 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     write!(out, "> ")?;
     println!("{out}\n\n\n");
     cli_clipboard::set_contents(out.clone()).map_err(|_| anyhow!("Failed to set clipboard"))?;
+    let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut dots = 0;
         SetConsoleCursorInfo(
             GetStdHandle(-11_i32 as u32),
             &ConsoleCursorInfo::new(1, false),
         );
+
+        let cancelled_clone = Arc::clone(&cancelled);
+        std::thread::spawn(move || {
+            loop {
+                let key = unsafe { _getch() };
+                if key == 0x08 {
+                    cancelled_clone.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+        });
+
         loop {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(())
+            }
+
             if response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }]
                 ["battingOrder"]
                 .as_array()
@@ -154,10 +175,12 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     print!("\n\n");
     SetForegroundWindow(hwnd);
     post_lineup(
+        cancelled,
         response,
         home,
         standings,
         record,
+        next_game,
         home_pitcher_id,
         away_pitcher_id,
     )?;
@@ -452,10 +475,12 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
 }
 
 unsafe fn post_lineup(
+    cancelled: Arc<AtomicBool>,
     response: Value,
     home: bool,
     mut standings: Standings,
     mut record: RecordAgainst,
+    next_game: NextGame,
     mut home_pitcher_id: i64,
     mut away_pitcher_id: i64,
 ) -> Result<()> {
@@ -495,8 +520,16 @@ unsafe fn post_lineup(
 
     let mut first_time_around = true;
     loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(())
+        }
         if !core::mem::replace(&mut first_time_around, false) {
-            std::thread::sleep(Duration::new(2, 0));
+            let start = std::time::Instant::now();
+            while start.elapsed() < Duration::new(2, 0) {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(())
+                }
+            }
         }
         let Some(pbp) = ureq::get(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"))
             .call()
@@ -873,6 +906,7 @@ unsafe fn post_lineup(
                 writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}")?;
                 writeln!(out, "Standings: {standings}")?;
                 writeln!(out, "Record Against: {record}")?;
+                writeln!(out, "Next Game: {next_game}")?;
                 write!(out, "{pitching_masterpiece}")?;
                 writeln!(out, "### __Line Score__")?;
                 writeln!(out, "{header}")?;
@@ -885,10 +919,8 @@ unsafe fn post_lineup(
                 println!("{out}");
                 cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
 
-                loop {
-                    std::thread::sleep(Duration::new(u64::MAX, 0));
-                    core::hint::spin_loop();
-                }
+                while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
+                return Ok(())
             }
         }
     }
@@ -903,6 +935,7 @@ fn lines(
     Option<String>,
     RecordAgainst,
     Standings,
+    NextGame,
     (String, i64),
     (String, i64),
     Value,
@@ -922,7 +955,7 @@ fn lines(
     std::thread::scope(|s| {
         let pitcher_future = s.spawn(|| get_pitcher_lines(&response, &home_abbreviation, &away_abbreviation));
 
-        let (previous_game, standings, record) = standings_and_record(&response, home, game_id)?;
+        let (previous_game, standings, record, next_game) = standings_record_next_game(&response, home, game_id)?;
 
         let (previous, previous_team_loadout) = if let Some(previous_game) = previous_game {
             let (home_score, away_score) = (
@@ -967,7 +1000,12 @@ fn lines(
         } else {
             (None, Value::Null)
         };
-        let title = title(home, home_full, away_full);
+
+        let title = if home {
+            format!("{home_full} vs. {away_full}")
+        } else {
+            format!("{away_full} @ {home_full}")
+        };
 
         let ((away_pitcher_line, away_pitcher_id), (home_pitcher_line, home_pitcher_id)) = pitcher_future.join().ok().context("Pitcher lines thread panicked")??;
 
@@ -976,6 +1014,7 @@ fn lines(
             previous,
             record,
             standings,
+            next_game,
             (away_pitcher_line, away_pitcher_id),
             (home_pitcher_line, home_pitcher_id),
             previous_team_loadout,
@@ -983,11 +1022,11 @@ fn lines(
     })
 }
 
-fn standings_and_record(
+fn standings_record_next_game(
     response: &Value,
     home: bool,
     game_id: i64,
-) -> Result<(Option<Value>, Standings, RecordAgainst)> {
+) -> Result<(Option<Value>, Standings, RecordAgainst, NextGame)> {
     let (our_id, our_abbreviation) = (
         response["gameData"]["teams"][if home { "home" } else { "away" }]["id"]
             .as_i64()
@@ -1000,18 +1039,11 @@ fn standings_and_record(
             .context("The opponent team didn't have an id")?,
         real_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?,
     );
-    let team_response = ureq::get(&format!("https://statsapi.mlb.com/api/v1/teams/{our_id}?hydrate=previousSchedule(limit=2147483647)")).call()?.into_json::<Value>()?;
 
-    let previous_game_id = team_response["teams"][0]["previousGameSchedule"]["dates"]
-        .as_array()
-        .context("Team didn't have previous games")?
-        .iter()
-        .flat_map(|games| games["games"].as_array())
-        .flat_map(|x| x.iter())
-        .rev()
-        .skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id))
-        .nth(1)
-        .and_then(|game| game["gamePk"].as_i64());
+    let all_games_root = ureq::get(&format!("https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&startDate={year}-01-01&endDate={year}-12-31&hydrate=venue(timezone,location)", year = Local::now().date_naive().year())).call()?.into_json::<Value>()?;
+    let all_games = all_games_root["dates"].as_array().iter().flat_map(|x| x.iter()).flat_map(|game| game["games"].as_array()).flat_map(|x| x.iter()).filter(|game| game["teams"]["home"]["team"]["id"].as_i64().is_some_and(|id| id == our_id) || game["teams"]["away"]["team"]["id"].as_i64().is_some_and(|id| id == our_id)).collect::<Vec<_>>();
+
+    let previous_game_id = all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1).next().and_then(|game| game["gamePk"].as_i64());
 
     let previous_game = if let Some(previous_game_id) = previous_game_id {
         Some(ureq::get(&format!(
@@ -1023,41 +1055,16 @@ fn standings_and_record(
         None
     };
 
-    let (wins, losses) = if home {
-        (
-            response["gameData"]["teams"]["home"]["record"]["wins"]
-                .as_i64()
-                .context("Home Team didn't have a wins count")?,
-            response["gameData"]["teams"]["home"]["record"]["losses"]
-                .as_i64()
-                .context("Home Team didn't have a losses count")?,
-        )
-    } else {
-        (
-            response["gameData"]["teams"]["away"]["record"]["wins"]
-                .as_i64()
-                .context("Away Team didn't have a wins count")?,
-            response["gameData"]["teams"]["away"]["record"]["losses"]
-                .as_i64()
-                .context("Away Team didn't have a losses count")?,
-        )
-    };
-
     let mut record = RecordAgainst::new(&our_abbreviation, &their_abbreviation);
-    let mut standings = Standings::new(wins, losses);
+    let mut standings = Standings::new();
     let mut streak_end = false;
 
-    let games = team_response["teams"][0]["previousGameSchedule"]["dates"]
-        .as_array()
-        .context("Team didn't have any previous games")?;
-    for game in games
-        .iter()
-        .flat_map(|game| game["games"].as_array())
-        .flat_map(|x| x.iter())
-        .rev()
+    let next_game = NextGame::new(all_games.iter()
         .skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id))
         .skip(1)
-    {
+        .next()
+        .context("Could not find upcoming game")?, our_id)?;
+    for game in all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1) {
         let home_id = game["teams"]["home"]["team"]["id"]
             .as_i64()
             .context("Home Team didn't have an ID")?;
@@ -1099,7 +1106,7 @@ fn standings_and_record(
         }
     }
 
-    Ok((previous_game, standings, record))
+    Ok((previous_game, standings, record, next_game))
 }
 
 pub fn get_pitcher_lines(

@@ -74,14 +74,6 @@ pub fn era(value: Value) -> Result<(f64, f64)> {
     })
 }
 
-pub fn title(home: bool, home_full: &str, away_full: &str) -> String {
-    if home {
-        format!("{home_full} vs. {away_full}")
-    } else {
-        format!("{away_full} @ {home_full}")
-    }
-}
-
 pub fn to_position_abbreviation(s: &str) -> Result<String> {
     let s = s.to_ascii_lowercase();
     Ok(match &*s {
@@ -138,7 +130,7 @@ pub fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value)
     let players = &previous_loadout["players"];
     let vec = match previous_loadout["battingOrder"].as_array() {
         Some(iter) => iter.iter().filter_map(|id| id.as_i64()).filter_map(|x| players[&format!("ID{x}")]["person"]["fullName"].as_str()).map(hide).collect::<Vec<String>>(),
-        None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Melky Cabrera"), hide("Tony Castillo"), hide("Robin Yount")],
+        None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")],
     };
     let [a, b, c, d, e, f, g, h, i] = vec.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
     writeln!(out, r"1 - {a} [\_\_] [.--- *|* .---]")?;
@@ -225,21 +217,15 @@ pub fn remap_score_event(event: &str, all_player_names: &[String]) -> String {
         None
     }
 
-    let mut event = if event.contains(" on a fly ball") {
-        event.replacen(" on a fly ball", "", 1)
-    } else if event.contains(" on a sharp fly ball") {
-        event.replacen(" on a sharp fly ball", "", 1)
-    } else if event.contains(" on a ground ball") {
-        event.replacen(" on a ground ball", "", 1)
-    } else if event.contains(" on a sharp ground ball") {
-        event.replacen(" on a sharp ground ball", "", 1)
-    } else if event.contains(" on a line drive") {
-        event.replacen(" on a line drive", "", 1)
-    } else if event.contains(" on a sharp line drive") {
-        event.replacen(" on a sharp line drive", "", 1)
-    } else {
-        event.to_owned()
-    };
+    let mut event = event
+        .replacen(" on a fly ball", "", 1)
+        .replacen(" on a sharp fly ball", "", 1)
+        .replacen(" on a ground ball", "", 1)
+        .replacen(" on a sharp ground ball", "", 1)
+        .replacen(" on a line drive", "", 1)
+        .replacen(" on a sharp line drive", "", 1)
+        .replacen(" down the left-field line", "", 1)
+        .replacen(" down the right-field line", "", 1);
 
     loop {
         event = if let Some((left, right)) = event.split_once(" left fielder") {

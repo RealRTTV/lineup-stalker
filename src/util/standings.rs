@@ -9,15 +9,16 @@ pub struct Standings {
 }
 
 impl Standings {
-    pub fn new(wins: i64, losses: i64) -> Self {
+    pub fn new() -> Self {
         Self {
-            wins,
-            losses,
+            wins: 0,
+            losses: 0,
             streak: None,
         }
     }
 
     pub fn streak_older_win(&mut self) -> bool {
+        self.wins += 1;
         if let Some((true, n)) = &mut self.streak {
             *n = n.saturating_add(1);
             true
@@ -30,6 +31,7 @@ impl Standings {
     }
 
     pub fn streak_older_loss(&mut self) -> bool {
+        self.losses += 1;
         if let Some((false, n)) = &mut self.streak {
             *n = n.saturating_add(1);
             true

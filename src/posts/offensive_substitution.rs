@@ -12,6 +12,7 @@ pub enum OffensiveSubstitution {
         abbreviation: String,
         top: bool,
         inning: u8,
+        base: String,
     },
     PinchHitter {
         old: String,
@@ -76,6 +77,7 @@ impl OffensiveSubstitution {
                 abbreviation,
                 top,
                 inning,
+                base: format!("{}B", play["base"].as_i64().context("Base must exist for pinch-runner")?)
             }),
             _ => Err(anyhow!("Invalid abbreviation ({:?}) for offensive substitution", &play["position"]["abbreviation"])),
         }
@@ -91,10 +93,11 @@ impl Debug for OffensiveSubstitution {
                 abbreviation,
                 top,
                 inning,
+                base,
             } => {
                 writeln!(
                     f,
-                    "### [{abbreviation} Lineup Change] | {new} pinch-running for {old}"
+                    "### [{abbreviation} Lineup Change] | {new} pinch-running for {old} at {base}"
                 )?;
                 writeln!(
                     f,

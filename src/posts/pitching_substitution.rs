@@ -24,7 +24,7 @@ impl PitchingSubstitution {
         abbreviation: &str,
         previous_pitcher: Value,
     ) -> Result<Self> {
-        let previous_pitcher_inning_stats = &previous_pitcher["people"][0]["stats"][0]["splits"].as_array().context("Could not find stats for latest game")?.last().context("Expected the player that just pitched to have stats about what they just pitched")?["stat"];
+        let previous_pitcher_inning_stats = previous_pitcher["people"][0]["stats"][0]["splits"].as_array().and_then(|value| value.last()).map(|x| &x["stat"]).unwrap_or(&Value::Null);
         let old = previous_pitcher["people"][0]["fullName"]
             .as_str()
             .context("Could not find old pitcher's name")?
@@ -39,28 +39,12 @@ impl PitchingSubstitution {
             .to_owned();
         let (new_era, _) = era(new_pitcher)?;
         let abbreviation = abbreviation.to_owned();
-        let innings_pitched = previous_pitcher_inning_stats["inningsPitched"]
-            .as_str()
-            .context("Could not find pitcher's IP")?
-            .to_owned();
-        let hits = previous_pitcher_inning_stats["hits"]
-            .as_i64()
-            .context("Could not find pitcher's hits")? as usize;
-        let earned_runs = previous_pitcher_inning_stats["earnedRuns"]
-            .as_i64()
-            .context("Could not find pitcher's earned runs")? as usize;
-        let strikeouts = previous_pitcher_inning_stats["strikeOuts"]
-            .as_i64()
-            .context("Could not find pitcher's strikeouts")? as usize;
-        let pitches = previous_pitcher_inning_stats["numberOfPitches"]
-            .as_i64()
-            .context("Could not find pitcher's pitch count")? as usize;
-        let walks = previous_pitcher_inning_stats["baseOnBalls"]
-            .as_i64()
-            .context("Could not find pitcher's BB")? as usize
-            + previous_pitcher_inning_stats["intentionalWalks"]
-            .as_i64()
-            .context("Could not find pitcher's IBB")? as usize;
+        let innings_pitched = previous_pitcher_inning_stats["inningsPitched"].as_str().unwrap_or("0.0").to_owned();
+        let hits = previous_pitcher_inning_stats["hits"].as_i64().unwrap_or(0) as usize;
+        let earned_runs = previous_pitcher_inning_stats["earnedRuns"].as_i64().unwrap_or(0) as usize;
+        let strikeouts = previous_pitcher_inning_stats["strikeOuts"].as_i64().unwrap_or(0) as usize;
+        let pitches = previous_pitcher_inning_stats["numberOfPitches"].as_i64().unwrap_or(0) as usize;
+        let walks = (previous_pitcher_inning_stats["baseOnBalls"].as_i64().unwrap_or(0) + previous_pitcher_inning_stats["intentionalWalks"].as_i64().unwrap_or(0)) as usize;
         let (old_era, _) = era(previous_pitcher)?;
 
         Ok(Self {

@@ -38,16 +38,11 @@ impl Display for Score {
     }
 }
 
-pub fn era(value: Value) -> Result<(f64, f64)> {
+pub fn pitching_stats(value: Value) -> Result<(f64, f64)> {
     let mut earned_runs = 0;
     let mut triple_innings_pitched = 0;
-    let mut l7_earned_runs = 0;
-    let mut l7_triple_innings_pitched = 0;
     let Some(arr) = value["people"][0]["stats"][0]["splits"].as_array() else { return Ok((0.0, 0.0)) };
-    for (idx, split) in arr.iter()
-        .rev()
-        .enumerate()
-    {
+    for split in arr.iter().rev() {
         let er = split["stat"]["earnedRuns"]
             .as_i64()
             .context("Pitcher doesn't have earnedRuns")?;
@@ -59,17 +54,13 @@ pub fn era(value: Value) -> Result<(f64, f64)> {
         let tip = (int.as_bytes()[0] - b'0') as i64 * 3 + (frac.as_bytes()[0] - b'0') as i64;
         earned_runs += er;
         triple_innings_pitched += tip;
-        if idx < 7 {
-            l7_earned_runs += er;
-            l7_triple_innings_pitched += tip;
-        }
     }
     Ok(if triple_innings_pitched == 0 {
         (0.0, 0.0)
     } else {
         (
             (earned_runs * 9 * 3) as f64 / triple_innings_pitched as f64,
-            (l7_earned_runs * 9 * 3) as f64 / l7_triple_innings_pitched as f64,
+            (triple_innings_pitched / 3) as f64 + (triple_innings_pitched % 3) as f64 / 10.0,
         )
     })
 }

@@ -27,7 +27,7 @@ use crate::util::next_game::NextGame;
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
 use crate::util::stat::HittingStat;
-use crate::util::statsapi::{era, lineup, real_abbreviation, write_last_lineup_underscored};
+use crate::util::statsapi::{pitching_stats, lineup, real_abbreviation, write_last_lineup_underscored};
 
 pub const TIMEZONE: Tz = America__Toronto;
 
@@ -852,7 +852,7 @@ unsafe fn post_lineup(
 
                     {
                         let home_masterpiece_kind = if away_hits == 0 {
-                            if away_walks == 0 {
+                            if away_walks == 0 && home_errors == 0 {
                                 Some("Perfect Game")
                             } else {
                                 Some("No-Hitter")
@@ -867,16 +867,18 @@ unsafe fn post_lineup(
                             None
                         };
                         if let Some(home_masterpiece_kind) = home_masterpiece_kind {
+                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks;
+
                             writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | **{away_strikeouts}** K", innings_count = innings.len())?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 15 { "__" } else { "" })?;
                             writeln!(out, "> Pitch Count: **{away_receiving_pitches}**")?;
                         }
                     }
 
                     {
                         let away_masterpiece_kind = if home_hits == 0 {
-                            if home_walks == 0 {
+                            if home_walks == 0 && away_errors == 0 {
                                 Some("Perfect Game")
                             } else {
                                 Some("No-Hitter")
@@ -891,9 +893,11 @@ unsafe fn post_lineup(
                             None
                         };
                         if let Some(away_masterpiece_kind) = away_masterpiece_kind {
+                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks;
+
                             writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | **{home_strikeouts}** K", innings_count = innings.len())?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 15 { "__" } else { "" })?;
                             writeln!(out, "> Pitch Count: **{home_receiving_pitches}**")?;
                         }
                     }
@@ -1128,13 +1132,13 @@ pub fn get_pitcher_lines(
         .as_str()
         .context("Error obtaining Away Pitcher name")?;
 
-    let (home_era, home_l7) = era(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
-    let (away_era, away_l7) = era(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
+    let (home_era, home_ip) = pitching_stats(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
+    let (away_era, away_ip) = pitching_stats(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
 
     let away_pitcher_line =
-        format!("{away_abbreviation}: {away_pitcher} ({away_era:.2} ERA *|* {away_l7:.2} L7)");
+        format!("{away_abbreviation}: {away_pitcher} ({away_era:.2} ERA *|* {away_ip:.1} IP)");
     let home_pitcher_line =
-        format!("{home_abbreviation}: {home_pitcher} ({home_era:.2} ERA *|* {home_l7:.2} L7)");
+        format!("{home_abbreviation}: {home_pitcher} ({home_era:.2} ERA *|* {home_ip:.1} IP)");
 
     Ok((
         (away_pitcher_line, away_pitcher_id),

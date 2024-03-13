@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use serde_json::Value;
 use anyhow::{Result, Context};
-use crate::{era, last_name};
+use crate::{pitching_stats, last_name};
 
 pub struct PitchingSubstitution {
     old: String,
@@ -37,7 +37,7 @@ impl PitchingSubstitution {
             .as_str()
             .context("Could not find new pitcher's name")?
             .to_owned();
-        let (new_era, _) = era(new_pitcher)?;
+        let (new_era, _) = pitching_stats(new_pitcher)?;
         let abbreviation = abbreviation.to_owned();
         let innings_pitched = previous_pitcher_inning_stats["inningsPitched"].as_str().unwrap_or("0.0").to_owned();
         let hits = previous_pitcher_inning_stats["hits"].as_i64().unwrap_or(0) as usize;
@@ -45,7 +45,7 @@ impl PitchingSubstitution {
         let strikeouts = previous_pitcher_inning_stats["strikeOuts"].as_i64().unwrap_or(0) as usize;
         let pitches = previous_pitcher_inning_stats["numberOfPitches"].as_i64().unwrap_or(0) as usize;
         let walks = (previous_pitcher_inning_stats["baseOnBalls"].as_i64().unwrap_or(0) + previous_pitcher_inning_stats["intentionalWalks"].as_i64().unwrap_or(0)) as usize;
-        let (old_era, _) = era(previous_pitcher)?;
+        let (old_era, _) = pitching_stats(previous_pitcher)?;
 
         Ok(Self {
             old,

@@ -867,7 +867,7 @@ unsafe fn post_lineup(
                             None
                         };
                         if let Some(home_masterpiece_kind) = home_masterpiece_kind {
-                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks;
+                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks as i64;
 
                             writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
@@ -893,7 +893,7 @@ unsafe fn post_lineup(
                             None
                         };
                         if let Some(away_masterpiece_kind) = away_masterpiece_kind {
-                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks;
+                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks as i64;
 
                             writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;

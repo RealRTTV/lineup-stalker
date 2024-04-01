@@ -20,22 +20,12 @@ impl RecordAgainst {
         }
     }
 
-    pub fn add_older_win(&mut self) {
-        self.our_record += 1;
-        self.scored_recently = self.scored_recently.or(Some(true));
-    }
-
-    pub fn add_older_loss(&mut self) {
-        self.their_record += 1;
-        self.scored_recently = self.scored_recently.or(Some(true));
-    }
-
-    pub fn add_newer_win(&mut self) {
+    pub fn win(&mut self) {
         self.our_record += 1;
         self.scored_recently = Some(true);
     }
 
-    pub fn add_newer_loss(&mut self) {
+    pub fn loss(&mut self) {
         self.their_record += 1;
         self.scored_recently = Some(false);
     }

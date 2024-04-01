@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use serde_json::Value;
 use anyhow::{Result, Context};
-use crate::{pitching_stats, last_name};
+use crate::{pitching_stats, last_name, get};
 
 pub struct PitchingSubstitution {
     old: String,
@@ -32,7 +32,7 @@ impl PitchingSubstitution {
         let new_id = play["player"]["id"]
             .as_i64()
             .context("Could not find new pitcher's name")?;
-        let new_pitcher = ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{new_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?;
+        let new_pitcher = get(&format!("https://statsapi.mlb.com/api/v1/people/{new_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?;
         let new = new_pitcher["people"][0]["fullName"]
             .as_str()
             .context("Could not find new pitcher's name")?

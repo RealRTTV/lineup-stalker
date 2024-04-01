@@ -22,6 +22,7 @@ use crate::posts::pitching_substitution::PitchingSubstitution;
 use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
 use crate::util::{clear_screen, get_local_team, last_name};
+use crate::util::decisions::Decisions;
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
 use crate::util::next_game::NextGame;
 use crate::util::record_against::RecordAgainst;
@@ -55,6 +56,22 @@ fn main() {
     }
 }
 
+pub fn get(url: &str) -> Result<Value> {
+    get_with_sleep(url, Duration::from_millis(3000))
+}
+
+pub fn get_with_sleep(url: &str, duration: Duration) -> Result<Value> {
+    loop {
+        return match ureq::get(url).call() {
+            Ok(response) => response,
+            Err(_) => {
+                std::thread::sleep(duration);
+                continue;
+            }
+        }.into_json::<Value>().context("Response was not a valid json")
+    }
+}
+
 unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     let local_team = get_local_team();
     SetConsoleCursorInfo(
@@ -64,11 +81,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     let (id, home, first_stat, second_stat) = get_id(local_team)?;
     let url = format!("https://statsapi.mlb.com/api/v1.1/game/{id}/feed/live");
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 });
-    let mut response =
-        ureq::get(&url)
-            .call()
-            .context(anyhow!("Initial URL request failed ({url})"))?
-            .into_json::<Value>().context("Initial URL Request did not return valid json")?;
+    let mut response = get(&url)?;
     let utc = DateTime::<Utc>::from_str(response["gameData"]["datetime"]["dateTime"].as_str().context("Game Date Time didn't exist")?)?.naive_utc();
     let datetime = TIMEZONE.from_utc_datetime(&utc);
     let local_datetime = Tz::from_str(response["gameData"]["venue"]["timeZone"]["id"].as_str().context("Could not find venue's local time zone for game")?).map_err(|e| anyhow!("{e}"))?.from_utc_datetime(&utc);
@@ -136,18 +149,10 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
                 .as_array()
                 .map_or(true, Vec::is_empty)
             {
-                print!("\rLoading{: <pad$}", ".".repeat(dots + 1), pad = (3 - dots));
+                print!("\rLoading{: <pad$}", ".".repeat(dots + 1), pad = 3 - dots);
                 std::io::Write::flush(&mut stdout())?;
                 dots = (dots + 1) % 3;
-                response =
-                    match ureq::get(&url).call() {
-                        Ok(response) => response,
-                        Err(_) => {
-                            std::thread::sleep(Duration::new(10, 0));
-                            continue;
-                        }
-                    }
-                        .into_json::<Value>().context("Response was not a valid json")?;
+                response = get(&url)?;
                 std::thread::sleep(Duration::new(1, 0));
             } else {
                 println!("         ");
@@ -231,19 +236,16 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
         unsafe {
             SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 });
         }
-        let response =
-            &ureq::get(&format!(
-                "https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&date={}",
-                date.format("%m/%d/%Y")
-            ))
-                .call()?
-                .into_json::<Value>()?;
+        let response = get(&format!(
+            "https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&date={}",
+            date.format("%m/%d/%Y")
+        ))?;
         let games = response["dates"][0]["games"]
             .as_array()
             .unwrap_or(const { &vec![] });
         let mut ids = Vec::with_capacity(games.len());
         let idx_width = (games.len() + 1).checked_ilog10().map_or(1, |x| x + 1) as usize;
-        println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
+        println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%A, %B %e %Y"));
         for (idx, game) in games.iter().enumerate() {
             ids.push(game["gamePk"].as_i64().context("Game ID didn't exist")?);
             print_game(game, idx, handle, idx_width, local_team, 7)?;
@@ -259,15 +261,12 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 date = date.with_month(3).context("Error when setting month to march")?;
                 clear_screen(ids.len() + 2);
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
+
                 continue 'a;
             } else if first == 0x34 {
                 idx = 0;
                 date = date.with_month(4).context("Error when setting month to april")?;
                 clear_screen(ids.len() + 2);
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x35 {
@@ -275,15 +274,11 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 date = date.with_month(5).context("Error when setting month to may")?;
                 clear_screen(ids.len() + 2);
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x36 {
                 idx = 0;
                 date = date.with_month(6).context("Error when setting month to june")?;
                 clear_screen(ids.len() + 2);
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x37 {
@@ -291,15 +286,11 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 date = date.with_month(7).context("Error when setting month to july")?;
                 clear_screen(ids.len() + 2);
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x38 {
                 idx = 0;
                 date = date.with_month(8).context("Error when setting month to august")?;
                 clear_screen(ids.len() + 2);
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x39 {
@@ -307,15 +298,11 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 date = date.with_month(9).context("Error when setting month to september")?;
                 clear_screen(ids.len() + 2);
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0x30 {
                 idx = 0;
                 date = date.with_month(10).context("Error when setting month to october")?;
                 clear_screen(ids.len() + 2);
-                unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 continue 'a;
             } else if first == 0xE0 {
@@ -338,22 +325,40 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                     std::io::Write::flush(&mut stdout())?;
                 } else if second == 0x4B {
                     idx = 0;
-                    date = date
-                        .pred_opt()
-                        .context("Error when getting previous date")?;
+                    loop {
+                        date = date
+                            .pred_opt()
+                            .context("Error when getting previous date")?;
+                        let response = get(&format!(
+                            "https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&date={}",
+                            date.format("%m/%d/%Y")
+                        ))?;
+                        if response["dates"][0]["games"].as_array().map_or(true, |list| list.is_empty()) {
+                            continue
+                        } else {
+                            break
+                        }
+                    }
                     clear_screen(ids.len() + 2);
-                    unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                    println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                     unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                     continue 'a;
                 } else if second == 0x4D {
                     idx = 0;
-                    date = date
-                        .succ_opt()
-                        .context("Error when getting next date")?;
+                    loop {
+                        date = date
+                            .succ_opt()
+                            .context("Error when getting next date")?;
+                        let response = get(&format!(
+                            "https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&date={}",
+                            date.format("%m/%d/%Y")
+                        ))?;
+                        if response["dates"][0]["games"].as_array().map_or(true, |list| list.is_empty()) {
+                            continue
+                        } else {
+                            break
+                        }
+                    }
                     clear_screen(ids.len() + 2);
-                    unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                    println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%m/%d/%Y"));
                     unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                     continue 'a;
                 } else {
@@ -367,7 +372,7 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                     std::thread::sleep(Duration::from_millis(35 - idx as u64));
                 }
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                println!("[{}] Please select the home team or away team (use arrows for switching):                                \n", date.format("%m/%d/%Y"));
+                println!("[{}] Please select the home team or away team (use arrows for switching):                                \n", date.format("%A, %B %e %Y"));
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: idx as i16 + 2 }); }
                 let game = &games[idx];
                 let home = game["teams"]["home"]["team"]["name"]
@@ -411,7 +416,7 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                     } else if first == 0x0D {
                         clear_screen(ids.len() + 2);
                         unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
-                        println!("[{}] Please select hitting stats (use arrows):                                \n", date.format("%m/%d/%Y"));
+                        println!("[{}] Please select hitting stats (use arrows):                                \n", date.format("%A, %B %e %Y"));
                         let mut stats = [HittingStat::AVG, HittingStat::OPS];
                         let mut selected_stat_idx = 0_usize;
                         loop {
@@ -531,18 +536,11 @@ unsafe fn post_lineup(
                 }
             }
         }
-        let Some(pbp) = ureq::get(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"))
-            .call()
-            .ok()
-            .and_then(|x| x.into_json::<Value>().ok())
-        else {
-            std::thread::sleep(Duration::new(3, 0));
-            continue;
-        };
+        let pbp = get_with_sleep(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"), Duration::from_secs(1))?;
         let all_plays = pbp["allPlays"].as_array().context("Game must have a list of plays")?;
         let mut play_idx = 0_usize;
         for play in all_plays {
-            // idk why it doesn't invert here, I seriously don't know what I did wrong.
+            // IDK why it doesn't invert here, I seriously don't know what I did wrong.
             let away = play["about"]["isTopInning"]
                 .as_bool()
                 .unwrap();
@@ -574,7 +572,7 @@ unsafe fn post_lineup(
                             let pitching_substitution = PitchingSubstitution::from_play(
                                 play_event,
                                 if away { &home_abbreviation } else { &away_abbreviation },
-                                ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{previous_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?
+                                get(&format!("https://statsapi.mlb.com/api/v1/people/{previous_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?
                             )?;
                             if away {
                                 home_pitcher_id = pitching_substitution.new_id();
@@ -736,12 +734,13 @@ unsafe fn post_lineup(
 
         previous_play_end = play_idx;
 
-        let r = ureq::get(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/linescore")).call()?.into_json::<Value>()?;
-        let innings = r["innings"]
+        let response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
+        let linescore = &response["liveData"]["linescore"];
+        let innings = linescore["innings"]
             .as_array()
             .context("Could not get innings")?;
         if innings.len() >= 9 {
-            let top = r["isTopInning"]
+            let top = linescore["isTopInning"]
                 .as_bool()
                 .context("Could not find out if it's the top of the inning")?;
             let mut home_runs = 0;
@@ -762,7 +761,7 @@ unsafe fn post_lineup(
             }
 
             let finished = if home_runs > away_runs
-                && r["outs"]
+                && linescore["outs"]
                     .as_i64()
                     .context("Could not get outs for the inning")?
                     >= 3
@@ -770,7 +769,7 @@ unsafe fn post_lineup(
                 true
             } else if away_runs > home_runs
                 && !top
-                && r["outs"]
+                && linescore["outs"]
                     .as_i64()
                     .context("Could not get outs for the inning")?
                     >= 3
@@ -841,10 +840,10 @@ unsafe fn post_lineup(
 
                 if (away_runs > home_runs) ^ home {
                     standings.win();
-                    record.add_newer_win();
+                    record.win();
                 } else {
                     standings.loss();
-                    record.add_newer_loss();
+                    record.loss();
                 }
 
                 let pitching_masterpiece = {
@@ -871,7 +870,7 @@ unsafe fn post_lineup(
 
                             writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 15 { "__" } else { "" })?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 12 { "__" } else { "" })?;
                             writeln!(out, "> Pitch Count: **{away_receiving_pitches}**")?;
                         }
                     }
@@ -897,13 +896,15 @@ unsafe fn post_lineup(
 
                             writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" })?;
                             writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 15 { "__" } else { "" })?;
+                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 12 { "__" } else { "" })?;
                             writeln!(out, "> Pitch Count: **{home_receiving_pitches}**")?;
                         }
                     }
 
                     out
                 };
+
+                let decisions = Decisions::new(&response)?;
 
                 let mut out = String::new();
                 writeln!(out, "## Final Score")?;
@@ -917,7 +918,9 @@ unsafe fn post_lineup(
                 writeln!(out, "{away_linescore}")?;
                 writeln!(out, "{home_linescore}")?;
                 writeln!(out, "### __Scoring Plays__")?;
-                writeln!(out, "{scoring_plays}")?;
+                write!(out, "{scoring_plays}")?;
+                writeln!(out, "### __Pitcher Decisions__")?;
+                writeln!(out, "{decisions}")?;
                 write!(out, "> ")?;
 
                 println!("{out}");
@@ -1037,76 +1040,41 @@ fn standings_record_next_game(
             .context("The selected team didn't have an id")?,
         real_abbreviation(&response["gameData"]["teams"][if home { "home" } else { "away" }])?,
     );
-    let (their_id, their_abbreviation) = (
-        response["gameData"]["teams"][if home { "away" } else { "home" }]["id"]
-            .as_i64()
-            .context("The opponent team didn't have an id")?,
-        real_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?,
-    );
+    let their_abbreviation = real_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?;
+    let game_type = response["gameData"]["game"]["type"].as_str().context("Could not get game type")?;
 
-    let all_games_root = ureq::get(&format!("https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&startDate={year}-01-01&endDate={year}-12-31&hydrate=venue(timezone,location)", year = Local::now().date_naive().year())).call()?.into_json::<Value>()?;
-    let all_games = all_games_root["dates"].as_array().iter().flat_map(|x| x.iter()).flat_map(|game| game["games"].as_array()).flat_map(|x| x.iter()).filter(|game| game["teams"]["home"]["team"]["id"].as_i64().is_some_and(|id| id == our_id) || game["teams"]["away"]["team"]["id"].as_i64().is_some_and(|id| id == our_id)).collect::<Vec<_>>();
+    let all_games_root = get(&format!("https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&startDate={year}-01-01&endDate={year}-12-31&hydrate=venue(timezone)", year = Local::now().date_naive().year()))?;
+    let all_games = all_games_root["dates"].as_array().iter().flat_map(|x| x.iter()).flat_map(|game| game["games"].as_array()).flat_map(|x| x.iter()).filter(|game| (game["teams"]["home"]["team"]["id"].as_i64().is_some_and(|id| id == our_id) || game["teams"]["away"]["team"]["id"].as_i64().is_some_and(|id| id == our_id)) && game["gameType"].as_str().is_some_and(|r#type| r#type == game_type)).collect::<Vec<_>>();
 
     let previous_game_id = all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1).next().and_then(|game| game["gamePk"].as_i64());
 
     let previous_game = if let Some(previous_game_id) = previous_game_id {
-        Some(ureq::get(&format!(
-            "https://statsapi.mlb.com/api/v1.1/game/{previous_game_id}/feed/live"
-        ))
-            .call()?
-            .into_json()?)
+        Some(get(&format!("https://statsapi.mlb.com/api/v1.1/game/{previous_game_id}/feed/live"))?)
     } else {
         None
     };
 
     let mut record = RecordAgainst::new(&our_abbreviation, &their_abbreviation);
     let mut standings = Standings::new();
-    let mut streak_end = false;
 
     let next_game = NextGame::new(all_games.iter()
         .skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id))
         .skip(1)
         .next()
         .context("Could not find upcoming game")?, our_id)?;
-    for game in all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1) {
+    for game in all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1).collect::<Vec<_>>().into_iter().rev() {
         let home_id = game["teams"]["home"]["team"]["id"]
             .as_i64()
             .context("Home Team didn't have an ID")?;
-        let away_id = game["teams"]["away"]["team"]["id"]
-            .as_i64()
-            .context("Away Team didn't have an ID")?;
+        let home_score = game["teams"]["home"]["score"].as_i64().context("Home Team didn't have a score")?;
+        let away_score = game["teams"]["away"]["score"].as_i64().context("Away Team didn't have a score")?;
 
-        if !streak_end {
-            let home_score = game["teams"]["home"]["score"].as_i64().context("Home Team didn't have a score")?;
-            let away_score = game["teams"]["away"]["score"].as_i64().context("Away Team didn't have a score")?;
-            let (our_score, their_score) = if home_id == our_id {
-                (home_score, away_score)
-            } else {
-                (away_score, home_score)
-            };
-            streak_end = !if our_score > their_score {
-                standings.streak_older_win()
-            } else {
-                standings.streak_older_loss()
-            };
-        }
-
-        if home_id == our_id && away_id == their_id || home_id == their_id && away_id == our_id {
-            let home_score = game["teams"]["home"]["score"].as_i64().context("Home Team didn't have a score")?;
-            let away_score = game["teams"]["away"]["score"].as_i64().context("Away Team didn't have a score")?;
-            if home_score > away_score {
-                if home_id == our_id {
-                    record.add_older_win();
-                } else {
-                    record.add_older_loss();
-                }
-            } else {
-                if home_id == our_id {
-                    record.add_older_loss();
-                } else {
-                    record.add_older_win();
-                }
-            }
+        if (home_score > away_score) ^ (home_id == our_id) {
+            record.loss();
+            standings.loss();
+        } else {
+            record.win();
+            standings.win();
         }
     }
 
@@ -1132,8 +1100,8 @@ pub fn get_pitcher_lines(
         .as_str()
         .context("Error obtaining Away Pitcher name")?;
 
-    let (home_era, home_ip) = pitching_stats(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
-    let (away_era, away_ip) = pitching_stats(ureq::get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])")).call()?.into_json::<Value>()?)?;
+    let (home_era, home_ip) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
+    let (away_era, away_ip) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
 
     let away_pitcher_line =
         format!("{away_abbreviation}: {away_pitcher} ({away_era:.2} ERA *|* {away_ip:.1} IP)");

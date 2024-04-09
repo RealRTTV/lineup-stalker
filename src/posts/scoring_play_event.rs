@@ -110,10 +110,11 @@ impl Debug for ScoringPlayEvent {
 
 impl Display for ScoringPlayEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let half = if self.top { "Top" } else { "Bot" };
-        let inning = nth(self.inning as usize);
-        write!(f, "{half} **{inning}**:")?;
-        for score in &self.scores {
+        let Self { away_abbreviation, away_score, home_abbreviation, home_score, inning, top, scores, .. } = self;
+        let half = if *top { "Top" } else { "Bot" };
+        let inning = nth(*inning as usize);
+        write!(f, "`{away_abbreviation} {away_score}-{home_score} {home_abbreviation}` | {half} **{inning}**:")?;
+        for score in scores {
             write!(f, " {score}")?;
         }
         Ok(())

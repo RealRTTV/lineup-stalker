@@ -15,13 +15,17 @@ pub struct NextGame {
     local_timezone: Tz,
 }
 
+const SPECIFY_TEAM_LOCATIONS: &[&str] = &["New York", "Los Angeles", "Chicago"];
+
 impl NextGame {
     pub fn new(game: &Value, our_id: i64) -> Result<Self> {
         let home_id = game["teams"]["home"]["team"]["id"].as_i64().context("Could not get home Team ID")?;
         let home_team = get(&format!("https://statsapi.mlb.com/api/v1/teams/{home_id}"))?;
+        let location_name = home_team["teams"][0]["franchiseName"].as_str().context("Could not get team franchise name")?.to_string();
+        let full_name = home_team["teams"][0]["name"].as_str().context("Could not get team full name")?.to_string();
         Ok(Self {
             home: home_id == our_id,
-            location: home_team["teams"][0]["franchiseName"].as_str().context("Could not get team franchise name")?.to_string(),
+            location: if SPECIFY_TEAM_LOCATIONS.contains(&location_name.as_str()) { full_name } else { location_name },
             utc: DateTime::<Utc>::from_str(game["gameDate"].as_str().context("Game Date Time didn't exist")?)?.naive_utc(),
             local_timezone: Tz::from_str(game["venue"]["timeZone"]["id"].as_str().context("Could not find venue's local time zone for game")?).map_err(|e| anyhow!("{e}"))?,
         })

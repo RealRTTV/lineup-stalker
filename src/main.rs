@@ -735,11 +735,11 @@ unsafe fn post_lineup(
         previous_play_end = play_idx;
 
         let response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
-        let linescore = &response["liveData"]["linescore"];
-        let innings = linescore["innings"]
-            .as_array()
-            .context("Could not get innings")?;
-        if innings.len() >= 9 {
+        if !response["liveData"]["decisions"]["winner"].is_null() {
+            let linescore = &response["liveData"]["linescore"];
+            let innings = linescore["innings"]
+                .as_array()
+                .context("Could not get innings")?;
             let top = linescore["isTopInning"]
                 .as_bool()
                 .context("Could not find out if it's the top of the inning")?;
@@ -760,175 +760,156 @@ unsafe fn post_lineup(
                 away_errors += inning["away"]["errors"].as_i64().unwrap_or(0);
             }
 
-            let finished = if home_runs > away_runs
-                && linescore["outs"]
-                    .as_i64()
-                    .context("Could not get outs for the inning")?
-                    >= 3
+            let away_bold = if away_runs > home_runs { "**" } else { "" };
+            let home_bold = if home_runs > away_runs { "**" } else { "" };
+            let walkoff = if home_runs > away_runs
+                && home_runs
+                - innings
+                .last()
+                .context("You gotta have at least one inning if the game is over")?
+                ["home"]["runs"]
+                .as_i64()
+                .unwrap_or(0)
+                <= away_runs
             {
-                true
-            } else if away_runs > home_runs
-                && !top
-                && linescore["outs"]
-                    .as_i64()
-                    .context("Could not get outs for the inning")?
-                    >= 3
-            {
-                true
+                "**"
             } else {
-                false
+                ""
             };
-
-            if finished {
-                let away_bold = if away_runs > home_runs { "**" } else { "" };
-                let home_bold = if home_runs > away_runs { "**" } else { "" };
-                let walkoff = if home_runs > away_runs
-                    && home_runs
-                        - innings
-                            .last()
-                            .context("You gotta have at least one inning if the game is over")?
-                            ["home"]["runs"]
-                            .as_i64()
-                            .unwrap_or(0)
-                        <= away_runs
-                {
-                    "**"
-                } else {
-                    ""
-                };
-                let mut header = "`    ".to_owned();
-                let mut away_linescore = format!("`{away_abbreviation: <3} ");
-                let mut home_linescore = format!("`{home_abbreviation: <3} ");
-                for (idx, inning) in innings.iter().enumerate() {
-                    write!(
-                        &mut header,
-                        "|{n: ^3}",
-                        n = inning["num"]
-                            .as_i64()
-                            .context("Could not find inning number")?
-                    )?;
-                    write!(
-                        &mut away_linescore,
-                        "|{n: ^3}",
-                        n = inning["away"]["runs"].as_i64().unwrap_or(0)
-                    )?;
-                    write!(
-                        &mut home_linescore,
-                        "|{n: ^3}",
-                        n = if idx + 1 == innings.len() && top {
-                            "-".to_owned()
-                        } else {
-                            inning["home"]["runs"].as_i64().unwrap_or(0).to_string()
-                        }
-                    )?;
-                }
-                header.push_str("|| R | H | E |`");
+            let mut header = "`    ".to_owned();
+            let mut away_linescore = format!("`{away_abbreviation: <3} ");
+            let mut home_linescore = format!("`{home_abbreviation: <3} ");
+            for (idx, inning) in innings.iter().enumerate() {
+                write!(
+                    &mut header,
+                    "|{n: ^3}",
+                    n = inning["num"]
+                        .as_i64()
+                        .context("Could not find inning number")?
+                )?;
                 write!(
                     &mut away_linescore,
-                    "||{r: ^3}|{h: ^3}|{e: ^3}|`",
-                    r = away_runs,
-                    h = away_hits,
-                    e = away_errors
+                    "|{n: ^3}",
+                    n = inning["away"]["runs"].as_i64().unwrap_or(0)
                 )?;
                 write!(
                     &mut home_linescore,
-                    "||{r: ^3}|{h: ^3}|{e: ^3}|`",
-                    r = home_runs,
-                    h = home_hits,
-                    e = home_errors
+                    "|{n: ^3}",
+                    n = if idx + 1 == innings.len() && top {
+                        "-".to_owned()
+                    } else {
+                        inning["home"]["runs"].as_i64().unwrap_or(0).to_string()
+                    }
                 )?;
+            }
+            header.push_str("|| R | H | E |`");
+            write!(
+                &mut away_linescore,
+                "||{r: ^3}|{h: ^3}|{e: ^3}|`",
+                r = away_runs,
+                h = away_hits,
+                e = away_errors
+            )?;
+            write!(
+                &mut home_linescore,
+                "||{r: ^3}|{h: ^3}|{e: ^3}|`",
+                r = home_runs,
+                h = home_hits,
+                e = home_errors
+            )?;
 
-                if (away_runs > home_runs) ^ home {
-                    standings.win();
-                    record.win();
-                } else {
-                    standings.loss();
-                    record.loss();
+            if (away_runs > home_runs) ^ home {
+                standings.win();
+                record.win();
+            } else {
+                standings.loss();
+                record.loss();
+            }
+
+            let pitching_masterpiece = {
+                let mut out = String::new();
+
+                {
+                    let home_masterpiece_kind = if away_hits == 0 {
+                        if away_walks == 0 && home_errors == 0 {
+                            Some("Perfect Game")
+                        } else {
+                            Some("No-Hitter")
+                        }
+                    } else if starting_home_pitcher_id == home_pitcher_id {
+                        if away_runs == 0 {
+                            Some("Complete Game Shutout")
+                        } else {
+                            Some("Complete Game")
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(home_masterpiece_kind) = home_masterpiece_kind {
+                        let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks as i64;
+                        let maddux = away_receiving_pitches < 100 && starting_home_pitcher_id == home_pitcher_id && away_runs == 0;
+
+                        writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}{maddux_suffix}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" }, maddux_suffix = if maddux { " Maddux" } else { "" })?;
+                        writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
+                        writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 12 { "__" } else { "" })?;
+                        writeln!(out, "> Pitch Count: {maddux_left}**{away_receiving_pitches}**{maddux_right}", maddux_left = if maddux { "__*" } else { "" }, maddux_right = if maddux { "*__" } else { "" })?;
+                    }
                 }
 
-                let pitching_masterpiece = {
-                    let mut out = String::new();
-
-                    {
-                        let home_masterpiece_kind = if away_hits == 0 {
-                            if away_walks == 0 && home_errors == 0 {
-                                Some("Perfect Game")
-                            } else {
-                                Some("No-Hitter")
-                            }
-                        } else if starting_home_pitcher_id == home_pitcher_id {
-                            if away_runs == 0 {
-                                Some("Complete Game Shutout")
-                            } else {
-                                Some("Complete Game")
-                            }
+                {
+                    let away_masterpiece_kind = if home_hits == 0 {
+                        if home_walks == 0 && away_errors == 0 {
+                            Some("Perfect Game")
                         } else {
-                            None
-                        };
-                        if let Some(home_masterpiece_kind) = home_masterpiece_kind {
-                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks as i64;
-
-                            writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" })?;
-                            writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 12 { "__" } else { "" })?;
-                            writeln!(out, "> Pitch Count: **{away_receiving_pitches}**")?;
+                            Some("No-Hitter")
                         }
-                    }
-
-                    {
-                        let away_masterpiece_kind = if home_hits == 0 {
-                            if home_walks == 0 && away_errors == 0 {
-                                Some("Perfect Game")
-                            } else {
-                                Some("No-Hitter")
-                            }
-                        } else if starting_away_pitcher_id == away_pitcher_id {
-                            if home_runs == 0 {
-                                Some("Complete Game Shutout")
-                            } else {
-                                Some("Complete Game")
-                            }
+                    } else if starting_away_pitcher_id == away_pitcher_id {
+                        if home_runs == 0 {
+                            Some("Complete Game Shutout")
                         } else {
-                            None
-                        };
-                        if let Some(away_masterpiece_kind) = away_masterpiece_kind {
-                            let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks as i64;
-
-                            writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" })?;
-                            writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
-                            writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 12 { "__" } else { "" })?;
-                            writeln!(out, "> Pitch Count: **{home_receiving_pitches}**")?;
+                            Some("Complete Game")
                         }
+                    } else {
+                        None
+                    };
+                    if let Some(away_masterpiece_kind) = away_masterpiece_kind {
+                        let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks as i64;
+                        let maddux = home_receiving_pitches < 100 && starting_away_pitcher_id == away_pitcher_id && home_runs == 0;
+
+                        writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}{maddux_suffix}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" }, maddux_suffix = if maddux { " Maddux" } else { "" })?;
+                        writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
+                        writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 12 { "__" } else { "" })?;
+                        writeln!(out, "> Pitch Count: {maddux_left}**{home_receiving_pitches}**{maddux_right}", maddux_left = if maddux { "__*" } else { "" }, maddux_right = if maddux { "*__" } else { "" })?;
                     }
+                }
 
-                    out
-                };
+                out
+            };
 
-                let decisions = Decisions::new(&response)?;
+            let decisions = Decisions::new(&response)?;
 
-                let mut out = String::new();
-                writeln!(out, "## Final Score")?;
-                writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}")?;
-                writeln!(out, "Standings: {standings}")?;
-                writeln!(out, "Record Against: {record}")?;
-                writeln!(out, "Next Game: {next_game}")?;
-                write!(out, "{pitching_masterpiece}")?;
-                writeln!(out, "### __Line Score__")?;
-                writeln!(out, "{header}")?;
-                writeln!(out, "{away_linescore}")?;
-                writeln!(out, "{home_linescore}")?;
-                writeln!(out, "### __Scoring Plays__")?;
-                write!(out, "{scoring_plays}")?;
-                writeln!(out, "### __Pitcher Decisions__")?;
-                writeln!(out, "{decisions}")?;
-                write!(out, "> ")?;
+            let mut out = String::new();
+            writeln!(out, "## Final Score")?;
+            writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}")?;
+            writeln!(out, "Standings: {standings}")?;
+            writeln!(out, "Record Against: {record}")?;
+            writeln!(out, "Next Game: {next_game}")?;
+            write!(out, "{pitching_masterpiece}")?;
+            writeln!(out, "### __Line Score__")?;
+            writeln!(out, "{header}")?;
+            writeln!(out, "{away_linescore}")?;
+            writeln!(out, "{home_linescore}")?;
+            writeln!(out, "### __Scoring Plays__")?;
+            write!(out, "{scoring_plays}")?;
+            writeln!(out, "### __Pitcher Decisions__")?;
+            writeln!(out, "{decisions}")?;
+            write!(out, "> ")?;
 
-                println!("{out}");
-                cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
+            println!("{out}");
+            cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
 
-                while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
-                return Ok(())
-            }
+            while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
+            return Ok(())
         }
     }
 }
@@ -1040,7 +1021,12 @@ fn standings_record_next_game(
             .context("The selected team didn't have an id")?,
         real_abbreviation(&response["gameData"]["teams"][if home { "home" } else { "away" }])?,
     );
-    let their_abbreviation = real_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?;
+    let (their_id, their_abbreviation) = (
+        response["gameData"]["teams"][if home { "away" } else { "home" }]["id"]
+            .as_i64()
+            .context("The selected team didn't have an id")?,
+        real_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?
+    );
     let game_type = response["gameData"]["game"]["type"].as_str().context("Could not get game type")?;
 
     let all_games_root = get(&format!("https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&startDate={year}-01-01&endDate={year}-12-31&hydrate=venue(timezone)", year = Local::now().date_naive().year()))?;
@@ -1066,14 +1052,18 @@ fn standings_record_next_game(
         let home_id = game["teams"]["home"]["team"]["id"]
             .as_i64()
             .context("Home Team didn't have an ID")?;
+        let away_id = game["teams"]["away"]["team"]["id"]
+            .as_i64()
+            .context("Away Team didn't have an ID")?;
+        let matchup = home_id == their_id || away_id == their_id;
         let home_score = game["teams"]["home"]["score"].as_i64().context("Home Team didn't have a score")?;
         let away_score = game["teams"]["away"]["score"].as_i64().context("Away Team didn't have a score")?;
 
         if (home_score > away_score) ^ (home_id == our_id) {
-            record.loss();
+            if matchup { record.loss(); }
             standings.loss();
         } else {
-            record.win();
+            if matchup { record.win(); }
             standings.win();
         }
     }

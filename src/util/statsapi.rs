@@ -38,29 +38,22 @@ impl Display for Score {
     }
 }
 
-pub fn pitching_stats(value: Value) -> Result<(f64, f64)> {
-    let mut earned_runs = 0;
-    let mut triple_innings_pitched = 0;
-    let Some(arr) = value["people"][0]["stats"][0]["splits"].as_array() else { return Ok((0.0, 0.0)) };
+pub fn pitching_stats(value: Value) -> Result<(f64, f64, String)> {
+    let hand = value["people"][0]["pitchHand"]["code"].as_str().context("Could not get pitcher's hand")?.to_owned();
+    let mut total_earned_runs = 0;
+    let mut total_outs = 0;
+    let Some(arr) = value["people"][0]["stats"][0]["splits"].as_array() else { return Ok((0.0, 0.0, hand)) };
     for split in arr.iter().rev() {
-        let er = split["stat"]["earnedRuns"]
-            .as_i64()
-            .context("Pitcher doesn't have earnedRuns")?;
-        let (int, rem) = split["stat"]["inningsPitched"]
-            .as_str()
-            .context("Pitcher doesn't have inningsPitched")?
-            .split_at(1);
-        let frac = rem.split_at(1).1;
-        let tip = (int.as_bytes()[0] - b'0') as i64 * 3 + (frac.as_bytes()[0] - b'0') as i64;
-        earned_runs += er;
-        triple_innings_pitched += tip;
+        total_earned_runs += split["stat"]["earnedRuns"].as_i64().context("Pitcher doesn't have earnedRuns")?;
+        total_outs += split["stat"]["outs"].as_i64().context("Could not get pitchers outs")?;
     }
-    Ok(if triple_innings_pitched == 0 {
-        (0.0, 0.0)
+    Ok(if total_outs == 0 {
+        (0.0, 0.0, hand)
     } else {
         (
-            (earned_runs * 9 * 3) as f64 / triple_innings_pitched as f64,
-            (triple_innings_pitched / 3) as f64 + (triple_innings_pitched % 3) as f64 / 10.0,
+            (total_earned_runs * 9 * 3) as f64 / total_outs as f64,
+            (total_outs / 3) as f64 + (total_outs % 3) as f64 / 10.0,
+            hand,
         )
     })
 }
@@ -124,25 +117,24 @@ pub fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value)
         None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")],
     };
     let [a, b, c, d, e, f, g, h, i] = vec.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
-    writeln!(out, r"1 - {a} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"2 - {b} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"3 - {c} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"4 - {d} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"5 - {e} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"6 - {f} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"7 - {g} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"8 - {h} [\_\_] [.--- *|* .---]")?;
-    writeln!(out, r"9 - {i} [\_\_] [.--- *|* .---]")?;
+    writeln!(out, r"`1` | **\_\_** {a} [.--- *|* .---]")?;
+    writeln!(out, r"`2` | **\_\_** {b} [.--- *|* .---]")?;
+    writeln!(out, r"`3` | **\_\_** {c} [.--- *|* .---]")?;
+    writeln!(out, r"`4` | **\_\_** {d} [.--- *|* .---]")?;
+    writeln!(out, r"`5` | **\_\_** {e} [.--- *|* .---]")?;
+    writeln!(out, r"`6` | **\_\_** {f} [.--- *|* .---]")?;
+    writeln!(out, r"`7` | **\_\_** {g} [.--- *|* .---]")?;
+    writeln!(out, r"`8` | **\_\_** {h} [.--- *|* .---]")?;
+    writeln!(out, r"`9` | **\_\_** {i} [.--- *|* .---]")?;
     Ok(())
 }
 
-pub fn lineup(root: &Value, prev: &Value, first_stat: HittingStat, second_stat: HittingStat) -> Result<String> {
+pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool) -> Result<String> {
     let mut players = Vec::new();
-    for (key, player) in root["players"]
+    for (_, player) in root["players"]
         .as_object()
         .context("Hitters didn't exist")?
     {
-        let prev_player = prev["players"].get(key.as_str());
         let person = player["person"]
             .as_object()
             .context("Hitter's 'person' didn't exist")?;
@@ -155,45 +147,20 @@ pub fn lineup(root: &Value, prev: &Value, first_stat: HittingStat, second_stat: 
             else {
                 continue;
             };
-        if batting_order % 100 != 0 {
-            continue;
-        }
-        let prev_batting_order = prev_player
-            .and_then(|player| player["battingOrder"].as_str())
-            .and_then(|x| x.parse::<i64>().ok());
-        let (prev_position, position) = (
-            prev_player.and_then(|x| x["allPositions"][0]["abbreviation"].as_str()),
-            player["position"]["abbreviation"]
-                .as_str()
-                .context("Hitter's first position didn't exist")?,
-        );
+        if batting_order % 100 != 0 { continue; }
+        let position = player["position"]["abbreviation"].as_str().context("Hitter's first position didn't exist")?;
         let first_stat = first_stat.get(&player["seasonStats"]["batting"])?;
         let second_stat = second_stat.get(&player["seasonStats"]["batting"])?;
-        let stats = format!("({first_stat} *|* {second_stat})");
-        let changed_order = prev_batting_order.map_or(true, |prev_batting_order| {
-            prev_batting_order != batting_order
-        });
-        let changed_order_surroundings = if changed_order { "**" } else { "" };
-        let name_and_index = format!(
-            "{changed_order_surroundings}{} - {name}{changed_order_surroundings}",
-            batting_order / 100
-        );
-        let changed_position = prev_position
-            .map_or(true, |prev_position| prev_position != position)
-            || prev_batting_order.map_or(true, |x| x % 100 != 0);
-        let changed_position_surroundings = if changed_position { "**" } else { "" };
-        let position =
-            format!("{changed_position_surroundings}[{position}]{changed_position_surroundings}");
+        let stats = format!(" ({first_stat} *|* {second_stat})");
         players.push((
             batting_order,
-            format!("{name_and_index} {position} {stats}                                "),
+            format!("`{}` | **{position}** {name}{stats}", batting_order / 100, stats = if show_stats { stats } else { String::new() }),
         ));
     }
-    let longest = players.iter().map(|(_, x)| x.len()).max().context("Batting order had at least one player")?;
     players.sort_by_key(|(x, _)| *x);
     let mut out = String::new();
     for (_, player) in players {
-        writeln!(&mut out, "{player}{}", " ".repeat(longest - player.len()))?;
+        writeln!(&mut out, "{player}")?;
     }
     Ok(out)
 }

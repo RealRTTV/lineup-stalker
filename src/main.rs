@@ -20,7 +20,7 @@ use crate::posts::defensive_switch::DefensiveSwitch;
 use crate::posts::offensive_substitution::OffensiveSubstitution;
 use crate::posts::pitching_substitution::PitchingSubstitution;
 use crate::posts::scoring_play::ScoringPlay;
-use crate::posts::scoring_play_event::ScoringPlayEvent;
+use crate::posts::scoring_play::ScoringPlayEvent;
 use crate::util::{clear_screen, get_local_team, last_name};
 use crate::util::decisions::Decisions;
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
@@ -36,7 +36,7 @@ pub mod util;
 
 pub mod posts {
     pub mod pitching_substitution;
-    pub mod scoring_play_event;
+    pub mod scoring_play;
     pub mod offensive_substitution;
     pub mod defensive_substitution;
     pub mod scoring_play;
@@ -166,10 +166,10 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     }
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: lines_before_lineup as i16 });
     {
-        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], &previous_team_loadout, first_stat, second_stat)?;
+        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], first_stat, second_stat, response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "R" || response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "S")?;
         let mut lines = out.split("\n").map(str::to_owned).collect::<Vec<_>>();
         for (idx, line) in lineup.split("\n").map(str::to_owned).enumerate() {
-            println!("{line}");
+            println!("{line}                                                                ");
             lines[lines_before_lineup + idx] = line;
         }
         out = lines.join("\n");
@@ -511,7 +511,7 @@ unsafe fn post_lineup(
         .filter_map(|obj| obj["person"]["fullName"].as_str().map(ToOwned::to_owned))
         .collect::<Vec<String>>();
     let mut scoring_plays = String::new();
-    let mut previous_play_end = 0;
+    let mut previous_play_plus_play_event_len = 0;
 
     let mut home_walks = 0_usize;
     let mut home_strikeouts = 0_usize;
@@ -538,39 +538,27 @@ unsafe fn post_lineup(
         }
         let pbp = get_with_sleep(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"), Duration::from_secs(1))?;
         let all_plays = pbp["allPlays"].as_array().context("Game must have a list of plays")?;
-        let mut play_idx = 0_usize;
-        for play in all_plays {
-            // IDK why it doesn't invert here, I seriously don't know what I did wrong.
-            let away = play["about"]["isTopInning"]
-                .as_bool()
-                .unwrap();
-            for play_event in play["playEvents"]
-                .as_array()
-                .unwrap()
-            {
-                if play_event["type"].as_str().unwrap() == "pitch" {
+        for (away, play) in all_plays.iter().map(|play| (play["about"]["isTopInning"].as_bool().unwrap(), play)).flat_map(|(away, play)| std::iter::once(play).chain(play["playEvents"].as_array().unwrap().iter()).map(|play| (away, play))).skip(previous_play_plus_play_event_len) {
+            if !play["type"].is_null() {
+                if play["type"].as_str().unwrap() == "pitch" {
                     if away {
                         away_receiving_pitches += 1;
                     } else {
                         home_receiving_pitches += 1;
                     }
-                } else if play_event["type"].as_str().unwrap() == "action" {
-                    match play_event["details"]["eventType"]
+                } else if play["type"].as_str().unwrap() == "action" {
+                    match play["details"]["eventType"]
                         .as_str()
                         .unwrap()
                     {
                         "pitching_substitution" => {
-                            if play_idx < previous_play_end {
-                                play_idx += 1;
-                                continue;
-                            }
                             let previous_pitcher_id = if away {
                                 home_pitcher_id
                             } else {
                                 away_pitcher_id
                             };
                             let pitching_substitution = PitchingSubstitution::from_play(
-                                play_event,
+                                play,
                                 if away { &home_abbreviation } else { &away_abbreviation },
                                 get(&format!("https://statsapi.mlb.com/api/v1/people/{previous_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?
                             )?;
@@ -593,7 +581,7 @@ unsafe fn post_lineup(
                                 continue;
                             }
                             let offensive_substitution = OffensiveSubstitution::from_play(
-                                play_event,
+                                play,
                                 play,
                                 if away {
                                     &away_abbreviation
@@ -612,7 +600,7 @@ unsafe fn post_lineup(
                                 continue;
                             }
                             let defensive_substitution = DefensiveSubstitution::from_play(
-                                play_event,
+                                play,
                                 play,
                                 if away {
                                     &home_abbreviation
@@ -631,7 +619,7 @@ unsafe fn post_lineup(
                                 continue;
                             }
                             let defensive_switch = DefensiveSwitch::from_play(
-                                play_event,
+                                play,
                                 play,
                                 if away {
                                     &home_abbreviation
@@ -645,7 +633,7 @@ unsafe fn post_lineup(
                             play_idx += 1;
                         }
                         "passed_ball" | "wild_pitch"
-                            if play_event["details"]["isScoringPlay"]
+                            if play["details"]["isScoringPlay"]
                                 .as_bool()
                                 .context("Could not find if something was a scoring play")? =>
                         {
@@ -654,7 +642,7 @@ unsafe fn post_lineup(
                                 continue;
                             }
                             let passed_ball = ScoringPlayEvent::from_play(
-                                play_event,
+                                play,
                                 play,
                                 &home_abbreviation,
                                 &away_abbreviation,
@@ -672,7 +660,7 @@ unsafe fn post_lineup(
                                 continue;
                             }
                             let stolen_home = ScoringPlayEvent::from_play(
-                                play_event,
+                                play,
                                 play,
                                 &home_abbreviation,
                                 &away_abbreviation,
@@ -732,7 +720,7 @@ unsafe fn post_lineup(
             play_idx += 1;
         }
 
-        previous_play_end = play_idx;
+        previous_play_len = all_plays.len();
 
         let response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
         if !response["liveData"]["decisions"]["winner"].is_null() {
@@ -1056,8 +1044,12 @@ fn standings_record_next_game(
             .as_i64()
             .context("Away Team didn't have an ID")?;
         let matchup = home_id == their_id || away_id == their_id;
-        let home_score = game["teams"]["home"]["score"].as_i64().context("Home Team didn't have a score")?;
-        let away_score = game["teams"]["away"]["score"].as_i64().context("Away Team didn't have a score")?;
+        let home_score = game["teams"]["home"]["score"].as_i64().unwrap_or(0);
+        let away_score = game["teams"]["away"]["score"].as_i64().unwrap_or(0);
+
+        if home_score == away_score {
+            continue
+        }
 
         if (home_score > away_score) ^ (home_id == our_id) {
             if matchup { record.loss(); }
@@ -1078,7 +1070,7 @@ pub fn get_pitcher_lines(
 ) -> Result<((String, i64), (String, i64))> {
     let home_pitcher_id = response["gameData"]["probablePitchers"]["home"]["id"]
         .as_i64()
-        .context("Error obtaining Home Pitcher ID")?;
+        .context("Error obtaining Home Pitcher ID")?;F
     let home_pitcher = response["gameData"]["probablePitchers"]["home"]["fullName"]
         .as_str()
         .context("Error obtaining Home Pitcher name")?;
@@ -1090,13 +1082,11 @@ pub fn get_pitcher_lines(
         .as_str()
         .context("Error obtaining Away Pitcher name")?;
 
-    let (home_era, home_ip) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
-    let (away_era, away_ip) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
+    let (home_era, home_ip, home_hand) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
+    let (away_era, away_ip, away_hand) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
 
-    let away_pitcher_line =
-        format!("{away_abbreviation}: {away_pitcher} ({away_era:.2} ERA *|* {away_ip:.1} IP)");
-    let home_pitcher_line =
-        format!("{home_abbreviation}: {home_pitcher} ({home_era:.2} ERA *|* {home_ip:.1} IP)");
+    let away_pitcher_line = format!("`{away_hand}` | **{away_abbreviation}** {away_pitcher} ({away_era:.2} ERA *|* {away_ip:.1} IP)");
+    let home_pitcher_line = format!("`{home_hand}` | **{home_abbreviation}** {home_pitcher} ({home_era:.2} ERA *|* {home_ip:.1} IP)");
 
     Ok((
         (away_pitcher_line, away_pitcher_id),

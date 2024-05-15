@@ -69,7 +69,7 @@ impl ScoringPlay {
                         remap_score_event(value, all_player_names)
                     };
 
-                    let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run");
+                    let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run") || value.contains("grand slam");
                     vec.push(Score::new(value, scoring));
                 }
                 vec

@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use serde_json::Value;
 use anyhow::{Result, Context};
+use crate::util;
 
 #[derive(Copy, Clone)]
 pub enum HittingStat {
@@ -14,6 +15,8 @@ pub enum HittingStat {
     ISO,
     BBK,
     BPA,
+    wOBA,
+    wRCp,
 }
 
 impl HittingStat {
@@ -21,7 +24,7 @@ impl HittingStat {
 
     pub fn prev(self) -> Self {
         match self {
-            Self::AVG => Self::BPA,
+            Self::AVG => Self::wRCp,
             Self::SLG => Self::AVG,
             Self::OBP => Self::SLG,
             Self::OPS => Self::OBP,
@@ -31,6 +34,8 @@ impl HittingStat {
             Self::ISO => Self::K,
             Self::BBK => Self::ISO,
             Self::BPA => Self::BBK,
+            Self::wOBA => Self::BPA,
+            Self::wRCp => Self::wOBA,
         }
     }
 
@@ -45,7 +50,9 @@ impl HittingStat {
             Self::K => Self::ISO,
             Self::ISO => Self::BBK,
             Self::BBK => Self::BPA,
-            Self::BPA => Self::AVG,
+            Self::BPA => Self::wOBA,
+            Self::wOBA => Self::wRCp,
+            Self::wRCp => Self::AVG,
         }
     }
 
@@ -100,6 +107,38 @@ impl HittingStat {
 
                 Ok(format!("{bpa:.3}").split_off((bpa < 1.0) as usize))
             }
+            Self::wOBA => {
+                let doubles = stats["doubles"].as_i64().context("Could not get player's doubles")? as usize;
+                let triples = stats["triples"].as_i64().context("Could not get player's triples")? as usize;
+                let home_runs = stats["homeRuns"].as_i64().context("Could not get player's home runs")? as usize;
+                let singles = stats["hits"].as_i64().context("Could not get player's hits")? as usize - doubles - triples - home_runs;
+                let at_bats = stats["atBats"].as_i64().context("Could not get player's at bats count")? as usize;
+                let bb = stats["baseOnBalls"].as_i64().context("Could not get player's BB count")? as usize;
+                let ibb = stats["intentionalWalks"].as_i64().context("Could not get player's IBB count")? as usize;
+                let hbp = stats["hitByPitch"].as_i64().context("Could not get player's HBP count")? as usize;
+                let sac = stats["sacFlies"].as_i64().context("Could not get player's sac flies")? as usize + stats["sacBunts"].as_i64().context("Could not get player's sac bunts")? as usize;
+                let stolen_bases = stats["stolenBases"].as_i64().context("Could not get player's stolen bases")? as usize;
+                let caught_stealings = stats["caughtStealing"].as_i64().context("Could not get player's caught stealing")? as usize;
+
+                let wOBA = util::fangraphs::WOBA_CONSTANTS.calculate_wOBA(bb, hbp, singles, doubles, triples, home_runs, stolen_bases, caught_stealings, at_bats + bb + hbp + sac);
+                Ok(format!("{wOBA:.3}").split_off((wOBA < 1.0) as usize))
+            },
+            Self::wRCp => {
+                let doubles = stats["doubles"].as_i64().context("Could not get player's doubles")? as usize;
+                let triples = stats["triples"].as_i64().context("Could not get player's triples")? as usize;
+                let home_runs = stats["homeRuns"].as_i64().context("Could not get player's home runs")? as usize;
+                let singles = stats["hits"].as_i64().context("Could not get player's hits")? as usize - doubles - triples - home_runs;
+                let at_bats = stats["atBats"].as_i64().context("Could not get player's at bats count")? as usize;
+                let bb = stats["baseOnBalls"].as_i64().context("Could not get player's BB count")? as usize;
+                let ibb = stats["intentionalWalks"].as_i64().context("Could not get player's IBB count")? as usize;
+                let hbp = stats["hitByPitch"].as_i64().context("Could not get player's HBP count")? as usize;
+                let sac = stats["sacFlies"].as_i64().context("Could not get player's sac flies")? as usize + stats["sacBunts"].as_i64().context("Could not get player's sac bunts")? as usize;
+                let stolen_bases = stats["stolenBases"].as_i64().context("Could not get player's stolen bases")? as usize;
+                let caught_stealings = stats["caughtStealing"].as_i64().context("Could not get player's caught stealing")? as usize;
+
+                let wRCp = util::fangraphs::WOBA_CONSTANTS.calculate_wRCp(bb, hbp, singles, doubles, triples, home_runs, stolen_bases, caught_stealings, at_bats + bb + hbp + sac + ibb, ibb);
+                Ok(format!("{wRCp}"))
+            }
         }
     }
 }
@@ -117,6 +156,8 @@ impl Display for HittingStat {
             Self::ISO => "ISO",
             Self::BBK => "BB/K",
             Self::BPA => "BPA",
+            Self::wOBA => "wOBA",
+            Self::wRCp => "wRC+",
         })
     }
 }

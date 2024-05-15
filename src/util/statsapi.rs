@@ -111,12 +111,14 @@ pub fn real_abbreviation(parent: &Value) -> Result<String> {
 }
 
 pub fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value) -> Result<()> {
+    let default_batting_order = vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")];
     let players = &previous_loadout["players"];
     let vec = match previous_loadout["battingOrder"].as_array() {
         Some(iter) => iter.iter().filter_map(|id| id.as_i64()).filter_map(|x| players[&format!("ID{x}")]["person"]["fullName"].as_str()).map(hide).collect::<Vec<String>>(),
-        None => vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")],
+        None => default_batting_order.clone(),
     };
-    let [a, b, c, d, e, f, g, h, i] = vec.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
+    let lineup = if vec.len() == 9 { vec } else { default_batting_order };
+    let [a, b, c, d, e, f, g, h, i] = lineup.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
     writeln!(out, r"`1` | **\_\_** {a} [.--- *|* .---]")?;
     writeln!(out, r"`2` | **\_\_** {b} [.--- *|* .---]")?;
     writeln!(out, r"`3` | **\_\_** {c} [.--- *|* .---]")?;

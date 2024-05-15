@@ -8,6 +8,7 @@ pub mod standings;
 pub mod stat;
 pub mod next_game;
 pub mod decisions;
+pub mod fangraphs;
 
 pub fn nth(n: usize) -> String {
     let mut buf = String::with_capacity(n.checked_ilog10().map_or(1, |x| x + 1) as usize + 2);

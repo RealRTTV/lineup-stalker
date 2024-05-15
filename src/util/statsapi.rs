@@ -131,7 +131,7 @@ pub fn write_last_lineup_underscored(out: &mut String, previous_loadout: &Value)
     Ok(())
 }
 
-pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool) -> Result<String> {
+pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool, team_name: &str) -> Result<String> {
     let mut players = Vec::new();
     for (_, player) in root["players"]
         .as_object()
@@ -151,8 +151,8 @@ pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, s
             };
         if batting_order % 100 != 0 { continue; }
         let position = player["position"]["abbreviation"].as_str().context("Hitter's first position didn't exist")?;
-        let first_stat = first_stat.get(&player["seasonStats"]["batting"])?;
-        let second_stat = second_stat.get(&player["seasonStats"]["batting"])?;
+        let first_stat = first_stat.get(&player["seasonStats"]["batting"], team_name)?;
+        let second_stat = second_stat.get(&player["seasonStats"]["batting"], team_name)?;
         let stats = format!(" ({first_stat} *|* {second_stat})");
         players.push((
             batting_order,

@@ -56,7 +56,7 @@ impl HittingStat {
         }
     }
 
-    pub fn get(self, stats: &Value) -> Result<String> {
+    pub fn get(self, stats: &Value, team: &str) -> Result<String> {
         match self {
             Self::AVG => stats["avg"].as_str().map(str::to_owned).context("Could not get hitter's AVG"),
             Self::SLG => stats["slg"].as_str().map(str::to_owned).context("Could not get hitter's SLG"),
@@ -136,7 +136,7 @@ impl HittingStat {
                 let stolen_bases = stats["stolenBases"].as_i64().context("Could not get player's stolen bases")? as usize;
                 let caught_stealings = stats["caughtStealing"].as_i64().context("Could not get player's caught stealing")? as usize;
 
-                let wRCp = util::fangraphs::WOBA_CONSTANTS.calculate_wRCp(bb, hbp, singles, doubles, triples, home_runs, stolen_bases, caught_stealings, at_bats + bb + hbp + sac + ibb, ibb);
+                let wRCp = util::fangraphs::WOBA_CONSTANTS.calculate_wRCp(bb, hbp, singles, doubles, triples, home_runs, stolen_bases, caught_stealings, at_bats + bb + hbp + sac + ibb, ibb, team);
                 Ok(format!("{wRCp}"))
             }
         }

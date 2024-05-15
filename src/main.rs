@@ -25,7 +25,7 @@ use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
 use crate::util::{clear_screen, get_local_team, last_name};
 use crate::util::decisions::Decisions;
-use crate::util::fangraphs::WOBA_CONSTANTS;
+use crate::util::fangraphs::{BALLPARK_ADJUSTMENTS, WOBA_CONSTANTS};
 use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
 use crate::util::next_game::NextGame;
 use crate::util::record_against::RecordAgainst;
@@ -47,6 +47,9 @@ pub mod posts {
 }
 
 fn main() {
+    let _ = WOBA_CONSTANTS.deref();
+    let _ = BALLPARK_ADJUSTMENTS.deref();
+
     loop {
         clear_screen(128);
         unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
@@ -169,7 +172,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     }
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: lines_before_lineup as i16 });
     {
-        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], first_stat, second_stat, response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "R" || response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "S")?;
+        let lineup = lineup(&response["liveData"]["boxscore"]["teams"][if home { "home" } else { "away" }], first_stat, second_stat, response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "R" || response["gameData"]["game"]["type"].as_str().context("Expected game type")? != "S", &response["gameData"]["teams"][if home { "home" } else { "away" }]["teamName"].as_str().context("Expected team name")?)?;
         let mut lines = out.split("\n").map(str::to_owned).collect::<Vec<_>>();
         for (idx, line) in lineup.split("\n").map(str::to_owned).enumerate() {
             println!("{line}                                                                ");
@@ -541,13 +544,13 @@ unsafe fn post_lineup(
         }
         let pbp = get_with_sleep(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"), Duration::from_secs(1))?;
         let all_plays = pbp["allPlays"].as_array().context("Game must have a list of plays")?;
-        for (away, play) in all_plays
+        for (away, parent, play) in all_plays
             .iter()
             .map(|play| (play["about"]["isTopInning"].as_bool().unwrap(), play))
-            .flat_map(|(away, play)| {
-                std::iter::once(play)
-                    .chain(play["playEvents"].as_array().unwrap_or(const { &vec![] }).iter())
-                    .map(move |play| (away, play))
+            .flat_map(|(away, parent)| {
+                std::iter::once(parent)
+                    .chain(parent["playEvents"].as_array().unwrap_or(const { &vec![] }).iter())
+                    .map(move |play| (away, parent, play))
             })
             .skip(previous_play_plus_play_event_len)
         {
@@ -625,7 +628,7 @@ unsafe fn post_lineup(
                         "offensive_substitution" => {
                             let offensive_substitution = OffensiveSubstitution::from_play(
                                 play,
-                                play,
+                                parent,
                                 if away {
                                     &away_abbreviation
                                 } else {
@@ -639,7 +642,7 @@ unsafe fn post_lineup(
                         "defensive_substitution" => {
                             let defensive_substitution = DefensiveSubstitution::from_play(
                                 play,
-                                play,
+                                parent,
                                 if away {
                                     &home_abbreviation
                                 } else {
@@ -653,7 +656,7 @@ unsafe fn post_lineup(
                         "defensive_switch" => {
                             let defensive_switch = DefensiveSwitch::from_play(
                                 play,
-                                play,
+                                parent,
                                 if away {
                                     &home_abbreviation
                                 } else {
@@ -671,7 +674,7 @@ unsafe fn post_lineup(
                         {
                             let passed_ball = ScoringPlayEvent::from_play(
                                 play,
-                                play,
+                                parent,
                                 &home_abbreviation,
                                 &away_abbreviation,
                                 &all_player_names,
@@ -684,7 +687,7 @@ unsafe fn post_lineup(
                         "stolen_base_home" => {
                             let stolen_home = ScoringPlayEvent::from_play(
                                 play,
-                                play,
+                                parent,
                                 &home_abbreviation,
                                 &away_abbreviation,
                                 &all_player_names,

@@ -1,10 +1,10 @@
-#![feature(inline_const)]
 #![feature(lazy_cell)]
 
 use core::ffi::c_void;
-use core::fmt::Write;
 use core::str::FromStr;
 use std::io::{stderr, stdout};
+use core::fmt::Write as OtherWrite;
+use std::convert::identity;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,30 +21,24 @@ use crate::posts::defensive_substitution::DefensiveSubstitution;
 use crate::posts::defensive_switch::DefensiveSwitch;
 use crate::posts::offensive_substitution::OffensiveSubstitution;
 use crate::posts::pitching_substitution::PitchingSubstitution;
+use crate::posts::Post;
 use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
-use crate::util::{clear_screen, get_local_team, last_name};
+use crate::util::{clear_screen, get_team_color_escape};
 use crate::util::decisions::Decisions;
 use crate::util::fangraphs::{BALLPARK_ADJUSTMENTS, WOBA_CONSTANTS};
-use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetConsoleWindow, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute, SetForegroundWindow};
+use crate::util::ffi::{_getch, ConsoleCursorInfo, Coordinate, GetStdHandle, SetConsoleCursorInfo, SetConsoleCursorPosition, SetConsoleTextAttribute};
 use crate::util::next_game::NextGame;
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
 use crate::util::stat::HittingStat;
 use crate::util::statsapi::{pitching_stats, lineup, real_abbreviation, write_last_lineup_underscored};
+use crate::util::team_stats_log::TeamStatsLog;
 
 pub const TIMEZONE: Tz = America__Toronto;
 
 pub mod util;
-
-pub mod posts {
-    pub mod pitching_substitution;
-    pub mod scoring_play;
-    pub mod offensive_substitution;
-    pub mod defensive_substitution;
-    pub mod scoring_play_event;
-    pub mod defensive_switch;
-}
+pub mod posts;
 
 fn main() {
     let _ = WOBA_CONSTANTS.deref();
@@ -53,7 +47,7 @@ fn main() {
     loop {
         clear_screen(128);
         unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 }); }
-        if let Err(e) = unsafe { main0(GetConsoleWindow().cast()) } {
+        if let Err(e) = unsafe { main0() } {
             eprintln!("Error while stalking lineup: {e}");
         }
         eprint!("\nPress any key to continue... ");
@@ -63,7 +57,7 @@ fn main() {
 }
 
 pub fn get(url: &str) -> Result<Value> {
-    get_with_sleep(url, Duration::from_millis(3000))
+    get_with_sleep(url, Duration::from_millis(2500))
 }
 
 pub fn get_with_sleep(url: &str, duration: Duration) -> Result<Value> {
@@ -78,13 +72,12 @@ pub fn get_with_sleep(url: &str, duration: Duration) -> Result<Value> {
     }
 }
 
-unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
-    let local_team = get_local_team();
+unsafe fn main0() -> Result<()> {
     SetConsoleCursorInfo(
         GetStdHandle(-11_i32 as u32),
         &ConsoleCursorInfo::new(1, false),
     );
-    let (id, home, first_stat, second_stat) = get_id(local_team)?;
+    let (id, home, first_stat, second_stat) = get_id()?;
     let url = format!("https://statsapi.mlb.com/api/v1.1/game/{id}/feed/live");
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: 0 });
     let mut response = get(&url)?;
@@ -124,8 +117,7 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     let lines_before_lineup = out.split("\n").count() - 1;
     write_last_lineup_underscored(&mut out, &previous_team_loadout)?;
     write!(out, "> ")?;
-    println!("{out}\n\n\n");
-    cli_clipboard::set_contents(out.clone()).map_err(|_| anyhow!("Failed to set clipboard"))?;
+    Post::Lineup { has_lineup: false }.send(&out)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut dots = 0;
@@ -179,13 +171,11 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
             lines[lines_before_lineup + idx] = line;
         }
         out = lines.join("\n");
-        cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
-        let _ = std::io::Write::flush(&mut stdout())?;
+        Post::Lineup { has_lineup: true }.send_with_settings(&out, false, true, true)?;
     }
     SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: 0, y: lines_before_lineup as i16 + 9 });
     print!("\n\n");
-    SetForegroundWindow(hwnd);
-    post_lineup(
+    posts_loop(
         cancelled,
         response,
         home,
@@ -198,8 +188,8 @@ unsafe fn main0(hwnd: *mut c_void) -> Result<()> {
     Ok(())
 }
 
-fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat, HittingStat)> {
-    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, local_team: Option<&'static str>, default_color: u16) -> Result<()> {
+fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
+    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, default_color_escape: &str, always_use_default_color: bool) -> Result<()> {
         let idx = idx + 1;
         let home = game["teams"]["home"]["team"]["name"]
             .as_str()
@@ -212,23 +202,20 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 .as_str()
                 .context("Game Date didn't exist")?,
         )?;
-        if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
-            unsafe {
-                SetConsoleTextAttribute(handle, 3);
-            }
+        let timestamp = TIMEZONE
+            .from_local_datetime(&time.naive_local())
+            .latest()
+            .context("Error converting to timezone")?
+            .format("%H:%M %Z");
+        if always_use_default_color {
+            println!("\x1B[{default_color_escape}m  {idx: >idx_width$}. {home} vs. {away} @ {timestamp}\x1B[0m");
         } else {
-            unsafe {
-                SetConsoleTextAttribute(handle, default_color);
-            }
+            println!(
+                "  {idx: >idx_width$}. \x1B[{home_color_escape}m{home}\x1B[0m vs. \x1B[{away_color_escape}m{away}\x1B[0m @ {timestamp}",
+                home_color_escape = get_team_color_escape(home),
+                away_color_escape = get_team_color_escape(away),
+            );
         }
-        println!(
-            "  {idx: >idx_width$}. {home} vs. {away} @ {}",
-            America__Toronto
-                .from_local_datetime(&time.naive_local())
-                .latest()
-                .context("Error converting to Canada Eastern Timezone")?
-                .format("%H:%M %Z")
-        );
         unsafe {
             SetConsoleTextAttribute(handle, 7);
         }
@@ -254,7 +241,7 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
         println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%A, %B %e %Y"));
         for (idx, game) in games.iter().enumerate() {
             ids.push(game["gamePk"].as_i64().context("Game ID didn't exist")?);
-            print_game(game, idx, handle, idx_width, local_team, 7)?;
+            print_game(game, idx, handle, idx_width, "0", false)?;
         }
         unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
         print!("> ");
@@ -373,9 +360,13 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                 }
             } else if first == 0x0D && !games.is_empty() {
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 2 }); }
-                for (idx, game) in games.iter().enumerate() {
-                    print_game(game, idx, handle, idx_width, local_team, 8)?;
-                    std::thread::sleep(Duration::from_millis(35 - idx as u64));
+                for (current_idx, game) in games.iter().enumerate() {
+                    if current_idx == idx {
+                        print_game(game, current_idx, handle, idx_width, "0", false)?;
+                    } else {
+                        print_game(game, current_idx, handle, idx_width, "90", true)?;
+                    }
+                    std::thread::sleep(Duration::from_millis(35 - current_idx as u64));
                 }
                 unsafe { SetConsoleCursorPosition(handle, Coordinate { x: 0, y: 0 }); }
                 println!("[{}] Please select the home team or away team (use arrows for switching):                                \n", date.format("%A, %B %e %Y"));
@@ -392,20 +383,17 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
                         .as_str()
                         .context("Game Date didn't exist")?,
                 )?;
-                if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
-                    unsafe { SetConsoleTextAttribute(handle, 3); }
-                }
+                unsafe { SetConsoleTextAttribute(handle, 7); }
                 println!(
-                    "> {home} vs. {away} @ {}                                ",
-                    America__Toronto
+                    "> \x1B[{home_color_escape}m{home}\x1B[0m vs. \x1B[{away_color_escape}m{away}\x1B[0m @ {timestamp}                                ",
+                    home_color_escape = get_team_color_escape(home),
+                    away_color_escape = get_team_color_escape(away),
+                    timestamp = TIMEZONE
                         .from_local_datetime(&time.naive_local())
                         .latest()
-                        .context("Error converting to America Toronto Timezone")?
+                        .context("Error converting to timezone")?
                         .format("%H:%M %Z")
                 );
-                if local_team.is_some_and(|local_team| local_team == home || local_team == away) {
-                    unsafe { SetConsoleTextAttribute(handle, 7); }
-                }
                 print!("  {home_underline}                                                                \r", home_underline = "^".repeat(home.len()));
                 std::io::Write::flush(&mut stdout())?;
                 let mut is_home = true;
@@ -485,7 +473,7 @@ fn get_id(local_team: Option<&'static str>) -> Result<(usize, bool, HittingStat,
     }
 }
 
-unsafe fn post_lineup(
+unsafe fn posts_loop(
     cancelled: Arc<AtomicBool>,
     response: Value,
     home: bool,
@@ -500,34 +488,21 @@ unsafe fn post_lineup(
     let away_abbreviation = real_abbreviation(&response["gameData"]["teams"]["away"])?;
     let starting_home_pitcher_id = home_pitcher_id;
     let starting_away_pitcher_id = away_pitcher_id;
-    let id_to_object = response["liveData"]["boxscore"]["teams"]["home"]["players"]
+    let id_to_object = response["gameData"]["players"]
         .as_object()
         .context("Could not find home players list")?
         .values()
-        .chain(
-            response["liveData"]["boxscore"]["teams"]["away"]["players"]
-                .as_object()
-                .context("Could not find away players list")?
-                .values(),
-        )
         .filter_map(|player| player["person"]["id"].as_i64().map(|id| (id, player.clone())))
         .collect::<FxHashMap<_, _>>();
     let all_player_names = id_to_object
         .values()
         .filter_map(|obj| obj["person"]["fullName"].as_str().map(ToOwned::to_owned))
         .collect::<Vec<String>>();
-    let mut scoring_plays = String::new();
+    let mut scoring_plays = Vec::new();
     let mut previous_play_plus_play_event_len = 0;
 
-    let mut home_walks = 0_usize;
-    let mut home_strikeouts = 0_usize;
-    let mut home_receiving_pitches = 0_usize;
-    let mut home_pitchers = last_name(id_to_object.get(&starting_home_pitcher_id).context("Pitcher's name should exist")?["person"]["fullName"].as_str().context("Expected pitcher's name")?).to_owned();
-
-    let mut away_walks = 0_usize;
-    let mut away_strikeouts = 0_usize;
-    let mut away_receiving_pitches = 0_usize;
-    let mut away_pitchers = last_name(id_to_object.get(&starting_away_pitcher_id).context("Pitcher's name should exist")?["person"]["fullName"].as_str().context("Expected pitcher's name")?).to_owned();
+    let mut home_stats_log = TeamStatsLog::new(id_to_object.get(&starting_home_pitcher_id).context("Pitcher's name should exist")?["person"]["lastName"].as_str().context("Expected pitcher's name")?.to_owned());
+    let mut away_stats_log = TeamStatsLog::new(id_to_object.get(&starting_away_pitcher_id).context("Pitcher's name should exist")?["person"]["lastName"].as_str().context("Expected pitcher's name")?.to_owned());
 
     let mut first_time_around = true;
     loop {
@@ -542,14 +517,14 @@ unsafe fn post_lineup(
                 }
             }
         }
-        let pbp = get_with_sleep(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"), Duration::from_secs(1))?;
+        let pbp = get(&format!("https://statsapi.mlb.com/api/v1/game/{game_id}/playByPlay"))?;
         let all_plays = pbp["allPlays"].as_array().context("Game must have a list of plays")?;
         for (away, parent, play) in all_plays
             .iter()
             .map(|play| (play["about"]["isTopInning"].as_bool().unwrap(), play))
             .flat_map(|(away, parent)| {
-                std::iter::once(parent)
-                    .chain(parent["playEvents"].as_array().unwrap_or(const { &vec![] }).iter())
+                parent["playEvents"].as_array().unwrap_or(const { &vec![] }).iter()
+                    .chain(std::iter::once(parent))
                     .map(move |play| (away, parent, play))
             })
             .skip(previous_play_plus_play_event_len)
@@ -566,16 +541,16 @@ unsafe fn post_lineup(
                     .unwrap();
                 if let Some("walk" | "intent_walk") = play["result"]["eventType"].as_str() {
                     if away {
-                        away_walks += 1;
+                        away_stats_log.walk();
                     } else {
-                        home_walks += 1;
+                        home_stats_log.walk();
                     }
                 }
                 if play["result"]["eventType"].as_str() == Some("strikeout") {
                     if away {
-                        away_strikeouts += 1;
+                        away_stats_log.strikeout();
                     } else {
-                        home_strikeouts += 1;
+                        home_stats_log.strikeout();
                     }
                 }
                 if !(desc.contains("home run") || desc.contains("homers") || desc.contains("scores")) {
@@ -587,15 +562,14 @@ unsafe fn post_lineup(
                     &away_abbreviation,
                     &all_player_names,
                 )?;
-                println!("{scoring:?}\n\n");
-                writeln!(&mut scoring_plays, "{scoring}")?;
-                cli_clipboard::set_contents(format!("{scoring:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
+                Post::ScoringPlay.send(format!("{scoring:?}"))?;
+                scoring_plays.push(scoring.to_string());
             } else {
                 if play["type"].as_str().unwrap() == "pitch" {
                     if away {
-                        away_receiving_pitches += 1;
+                        home_stats_log.pitch_thrown();
                     } else {
-                        home_receiving_pitches += 1;
+                        away_stats_log.pitch_thrown();
                     }
                 } else if play["type"].as_str().unwrap() == "action" {
                     match play["details"]["eventType"]
@@ -615,15 +589,12 @@ unsafe fn post_lineup(
                             )?;
                             if away {
                                 home_pitcher_id = pitching_substitution.new_id();
-                                home_pitchers += "/";
-                                home_pitchers += pitching_substitution.last_name();
+                                home_stats_log.change_pitcher(pitching_substitution.old_last_name().to_owned());
                             } else {
                                 away_pitcher_id = pitching_substitution.new_id();
-                                away_pitchers += "/";
-                                away_pitchers += pitching_substitution.last_name();
+                                away_stats_log.change_pitcher(pitching_substitution.old_last_name().to_owned());
                             }
-                            println!("{pitching_substitution:?}\n\n");
-                            cli_clipboard::set_contents(format!("{pitching_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
+                            Post::PitchingSubstitution.send(format!("{pitching_substitution:?}"))?;
                         }
                         "offensive_substitution" => {
                             let offensive_substitution = OffensiveSubstitution::from_play(
@@ -636,8 +607,7 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{offensive_substitution:?}\n\n");
-                            cli_clipboard::set_contents(format!("{offensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
+                            Post::OffensiveSubstitution.send(format!("{offensive_substitution:?}"))?;
                         }
                         "defensive_substitution" => {
                             let defensive_substitution = DefensiveSubstitution::from_play(
@@ -650,8 +620,7 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{defensive_substitution:?}\n\n");
-                            cli_clipboard::set_contents(format!("{defensive_substitution:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
+                            Post::DefensiveSubstitution.send(format!("{defensive_substitution:?}"))?;
                         }
                         "defensive_switch" => {
                             let defensive_switch = DefensiveSwitch::from_play(
@@ -664,8 +633,7 @@ unsafe fn post_lineup(
                                 },
                                 &id_to_object,
                             )?;
-                            println!("{defensive_switch:?}\n\n");
-                            cli_clipboard::set_contents(format!("{defensive_switch:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
+                            Post::DefensiveSwitch.send(format!("{defensive_switch:?}"))?;
                         }
                         "passed_ball" | "wild_pitch"
                             if play["details"]["isScoringPlay"]
@@ -680,9 +648,8 @@ unsafe fn post_lineup(
                                 &all_player_names,
                                 "Wild pitch",
                             )?;
-                            println!("{passed_ball:?}\n\n");
-                            cli_clipboard::set_contents(format!("{passed_ball:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
-                            writeln!(&mut scoring_plays, "{passed_ball}")?;
+                            Post::PassedBall.send(format!("{passed_ball:?}"))?;
+                            scoring_plays.push(passed_ball.to_string());
                         }
                         "stolen_base_home" => {
                             let stolen_home = ScoringPlayEvent::from_play(
@@ -693,9 +660,8 @@ unsafe fn post_lineup(
                                 &all_player_names,
                                 "Stolen base",
                             )?;
-                            println!("{stolen_home:?}\n\n");
-                            cli_clipboard::set_contents(format!("{stolen_home:?}")).map_err(|_| anyhow!("Failed to set clipboard"))?;
-                            writeln!(&mut scoring_plays, "{stolen_home}")?;
+                            Post::StolenHome.send(format!("{stolen_home:?}"))?;
+                            scoring_plays.push(stolen_home.to_string());
                         }
                         _ => {}
                     }
@@ -703,7 +669,7 @@ unsafe fn post_lineup(
             }
         }
 
-        previous_play_plus_play_event_len = all_plays.iter().map(|play| play["playEvents"].as_array().unwrap_or(&vec![]).len() + 1).sum();
+        previous_play_plus_play_event_len = all_plays.iter().map(|play| play["playEvents"].as_array().map_or(0, |vec| vec.len()) + play["about"]["isComplete"].as_bool().is_some_and(identity) as usize).sum();
 
         let response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
         if !response["liveData"]["decisions"]["winner"].is_null() {
@@ -714,40 +680,32 @@ unsafe fn post_lineup(
             let top = linescore["isTopInning"]
                 .as_bool()
                 .context("Could not find out if it's the top of the inning")?;
-            let mut home_runs = 0;
-            let mut home_hits = 0;
-            let mut home_errors = 0;
-
-            let mut away_runs = 0;
-            let mut away_hits = 0;
-            let mut away_errors = 0;
-
             for inning in innings {
-                home_runs += inning["home"]["runs"].as_i64().unwrap_or(0);
-                home_hits += inning["home"]["hits"].as_i64().unwrap_or(0);
-                home_errors += inning["home"]["errors"].as_i64().unwrap_or(0);
-                away_runs += inning["away"]["runs"].as_i64().unwrap_or(0);
-                away_hits += inning["away"]["hits"].as_i64().unwrap_or(0);
-                away_errors += inning["away"]["errors"].as_i64().unwrap_or(0);
+                home_stats_log.add_runs(inning["home"]["runs"].as_i64().unwrap_or(0) as usize);
+                home_stats_log.add_hits(inning["home"]["hits"].as_i64().unwrap_or(0) as usize);
+                home_stats_log.add_errors(inning["home"]["errors"].as_i64().unwrap_or(0) as usize);
+                away_stats_log.add_runs(inning["away"]["runs"].as_i64().unwrap_or(0) as usize);
+                away_stats_log.add_hits(inning["away"]["hits"].as_i64().unwrap_or(0) as usize);
+                away_stats_log.add_errors(inning["away"]["errors"].as_i64().unwrap_or(0) as usize);
             }
 
-            let away_bold = if away_runs > home_runs { "**" } else { "" };
-            let home_bold = if home_runs > away_runs { "**" } else { "" };
-            let walkoff = if home_runs > away_runs
-                && home_runs
+            let away_bold = if away_stats_log.runs > home_stats_log.runs { "**" } else { "" };
+            let home_bold = if home_stats_log.runs > away_stats_log.runs { "**" } else { "" };
+            let walkoff = if home_stats_log.runs > away_stats_log.runs
+                && home_stats_log.runs
                 - innings
                 .last()
                 .context("You gotta have at least one inning if the game is over")?
                 ["home"]["runs"]
                 .as_i64()
-                .unwrap_or(0)
-                <= away_runs
+                .unwrap_or(0) as usize
+                <= away_stats_log.runs
             {
                 "**"
             } else {
                 ""
             };
-            let mut header = "`    ".to_owned();
+            let mut header = "**`    ".to_owned();
             let mut away_linescore = format!("`{away_abbreviation: <3} ");
             let mut home_linescore = format!("`{home_abbreviation: <3} ");
             for (idx, inning) in innings.iter().enumerate() {
@@ -773,23 +731,23 @@ unsafe fn post_lineup(
                     }
                 )?;
             }
-            header.push_str("|| R | H | E |`");
+            header.push_str("|| R | H | E |`**");
             write!(
                 &mut away_linescore,
                 "||{r: ^3}|{h: ^3}|{e: ^3}|`",
-                r = away_runs,
-                h = away_hits,
-                e = away_errors
+                r = away_stats_log.runs,
+                h = away_stats_log.hits,
+                e = away_stats_log.errors
             )?;
             write!(
                 &mut home_linescore,
                 "||{r: ^3}|{h: ^3}|{e: ^3}|`",
-                r = home_runs,
-                h = home_hits,
-                e = home_errors
+                r = home_stats_log.runs,
+                h = home_stats_log.hits,
+                e = home_stats_log.errors
             )?;
 
-            if (away_runs > home_runs) ^ home {
+            if (away_stats_log.runs > home_stats_log.runs) ^ home {
                 standings.win();
                 record.win();
             } else {
@@ -797,71 +755,12 @@ unsafe fn post_lineup(
                 record.loss();
             }
 
-            let pitching_masterpiece = {
-                let mut out = String::new();
-
-                {
-                    let home_masterpiece_kind = if away_hits == 0 {
-                        if away_walks == 0 && home_errors == 0 {
-                            Some("Perfect Game")
-                        } else {
-                            Some("No-Hitter")
-                        }
-                    } else if starting_home_pitcher_id == home_pitcher_id {
-                        if away_runs == 0 {
-                            Some("Complete Game Shutout")
-                        } else {
-                            Some("Complete Game")
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some(home_masterpiece_kind) = home_masterpiece_kind {
-                        let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + away_strikeouts as i64 - 2 * away_hits - 4 * away_runs - away_walks as i64;
-                        let maddux = away_receiving_pitches < 100 && starting_home_pitcher_id == home_pitcher_id && away_runs == 0;
-
-                        writeln!(out, "### {home_abbreviation} {combined}{home_masterpiece_kind}{maddux_suffix}", combined = if starting_home_pitcher_id != home_pitcher_id { "Combined " } else { "" }, maddux_suffix = if maddux { " Maddux" } else { "" })?;
-                        writeln!(out, ":star: __{home_pitchers}'s Final Line__ :star:")?;
-                        writeln!(out, "> **{innings_count}.0** IP | **{away_hits}** H | **{away_runs}** ER | **{away_walks}** BB | {strikeout_surroundings}**{away_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if away_strikeouts >= 12 { "__" } else { "" })?;
-                        writeln!(out, "> Pitch Count: {maddux_left}**{away_receiving_pitches}**{maddux_right}", maddux_left = if maddux { "__*" } else { "" }, maddux_right = if maddux { "*__" } else { "" })?;
-                    }
-                }
-
-                {
-                    let away_masterpiece_kind = if home_hits == 0 {
-                        if home_walks == 0 && away_errors == 0 {
-                            Some("Perfect Game")
-                        } else {
-                            Some("No-Hitter")
-                        }
-                    } else if starting_away_pitcher_id == away_pitcher_id {
-                        if home_runs == 0 {
-                            Some("Complete Game Shutout")
-                        } else {
-                            Some("Complete Game")
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some(away_masterpiece_kind) = away_masterpiece_kind {
-                        let game_score = 50 + 3 * innings.len() as i64 + 2 * innings.len().saturating_sub(4) as i64 + home_strikeouts as i64 - 2 * home_hits - 4 * home_runs - home_walks as i64;
-                        let maddux = home_receiving_pitches < 100 && starting_away_pitcher_id == away_pitcher_id && home_runs == 0;
-
-                        writeln!(out, "### {away_abbreviation} {combined}{away_masterpiece_kind}{maddux_suffix}", combined = if starting_away_pitcher_id != away_pitcher_id { "Combined " } else { "" }, maddux_suffix = if maddux { " Maddux" } else { "" })?;
-                        writeln!(out, ":star: __{away_pitchers}'s Final Line__ :star:")?;
-                        writeln!(out, "> **{innings_count}.0** IP | **{home_hits}** H | **{home_runs}** ER | **{home_walks}** BB | {strikeout_surroundings}**{home_strikeouts}** K{strikeout_surroundings} | **{game_score}** GS", innings_count = innings.len(), strikeout_surroundings = if home_strikeouts >= 12 { "__" } else { "" })?;
-                        writeln!(out, "> Pitch Count: {maddux_left}**{home_receiving_pitches}**{maddux_right}", maddux_left = if maddux { "__*" } else { "" }, maddux_right = if maddux { "*__" } else { "" })?;
-                    }
-                }
-
-                out
-            };
-
+            let pitching_masterpiece = TeamStatsLog::generate_masterpiece(&home_stats_log, &away_stats_log, innings.len(), &home_abbreviation).unwrap_or(String::new()) + &TeamStatsLog::generate_masterpiece(&away_stats_log, &home_stats_log, innings.len(), &away_abbreviation).unwrap_or(String::new());
             let decisions = Decisions::new(&response)?;
 
             let mut out = String::new();
             writeln!(out, "## Final Score")?;
-            writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}")?;
+            writeln!(out, "{away_bold}{away_abbreviation}{away_bold} {away_runs}-{walkoff}{home_runs}{walkoff} {home_bold}{home_abbreviation}{home_bold}", away_runs = away_stats_log.runs, home_runs = home_stats_log.runs)?;
             writeln!(out, "Standings: {standings}")?;
             writeln!(out, "Record Against: {record}")?;
             writeln!(out, "Next Game: {next_game}")?;
@@ -871,13 +770,12 @@ unsafe fn post_lineup(
             writeln!(out, "{away_linescore}")?;
             writeln!(out, "{home_linescore}")?;
             writeln!(out, "### __Scoring Plays__")?;
-            write!(out, "{scoring_plays}")?;
+            write!(out, "{}", scoring_plays.join("\n"))?;
             writeln!(out, "### __Pitcher Decisions__")?;
             writeln!(out, "{decisions}")?;
             write!(out, "> ")?;
 
-            println!("{out}");
-            cli_clipboard::set_contents(out).map_err(|_| anyhow!("Failed to set clipboard"))?;
+            Post::FinalCard.send(&out)?;
 
             while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
             return Ok(())

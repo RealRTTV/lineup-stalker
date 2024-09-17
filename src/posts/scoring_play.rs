@@ -150,9 +150,16 @@ impl Debug for ScoringPlay {
             }
             "field_out" => {
                 if self.rbi == 1 {
-                    "RBI out".to_owned()
+                    "RBI groundout".to_owned()
                 } else {
-                    format!("{n}RBI out", n = self.rbi)
+                    format!("{n}RBI groundout", n = self.rbi)
+                }
+            }
+            "force_out" => {
+                if self.rbi == 1 {
+                    "RBI forceout".to_owned()
+                } else {
+                    format!("{n}RBI forceout", n = self.rbi)
                 }
             }
             "sac_fly" => {

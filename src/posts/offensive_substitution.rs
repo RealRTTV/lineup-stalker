@@ -106,7 +106,6 @@ impl Debug for OffensiveSubstitution {
                     n = nth(*inning as usize)
                 )?;
                 writeln!(f, "")?;
-                writeln!(f, "")?;
             }
             OffensiveSubstitution::PinchHitter {
                 old,
@@ -125,7 +124,6 @@ impl Debug for OffensiveSubstitution {
                     half = if *top { "Top" } else { "Bot" },
                     n = nth(*inning as usize)
                 )?;
-                writeln!(f, "")?;
                 writeln!(f, "")?;
             }
         }

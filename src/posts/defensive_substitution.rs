@@ -55,7 +55,6 @@ impl Debug for DefensiveSubstitution {
             n = nth(*inning as usize)
         )?;
         writeln!(f, "")?;
-        writeln!(f, "")?;
 
         Ok(())
     }

@@ -1,9 +1,12 @@
+#![allow(non_snake_case)]
+
 use std::fmt::Display;
 use serde_json::Value;
 use anyhow::{Result, Context};
 use crate::util;
 
 #[derive(Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum HittingStat {
     AVG,
     SLG,
@@ -114,7 +117,6 @@ impl HittingStat {
                 let singles = stats["hits"].as_i64().context("Could not get player's hits")? as usize - doubles - triples - home_runs;
                 let at_bats = stats["atBats"].as_i64().context("Could not get player's at bats count")? as usize;
                 let bb = stats["baseOnBalls"].as_i64().context("Could not get player's BB count")? as usize;
-                let ibb = stats["intentionalWalks"].as_i64().context("Could not get player's IBB count")? as usize;
                 let hbp = stats["hitByPitch"].as_i64().context("Could not get player's HBP count")? as usize;
                 let sac = stats["sacFlies"].as_i64().context("Could not get player's sac flies")? as usize + stats["sacBunts"].as_i64().context("Could not get player's sac bunts")? as usize;
                 let stolen_bases = stats["stolenBases"].as_i64().context("Could not get player's stolen bases")? as usize;

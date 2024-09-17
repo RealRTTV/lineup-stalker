@@ -1,13 +1,14 @@
 use std::fmt::{Debug, Formatter};
 use serde_json::Value;
 use anyhow::{Result, Context};
-use crate::{pitching_stats, last_name, get};
+use crate::{pitching_stats, get};
 
 pub struct PitchingSubstitution {
-    old: String,
+    old_name: String,
+    old_last_name: String,
     old_era: f64,
     new_id: i64,
-    new: String,
+    new_name: String,
     new_era: f64,
     abbreviation: String,
     innings_pitched: String,
@@ -25,15 +26,19 @@ impl PitchingSubstitution {
         previous_pitcher: Value,
     ) -> Result<Self> {
         let previous_pitcher_inning_stats = previous_pitcher["people"][0]["stats"][0]["splits"].as_array().and_then(|value| value.last()).map(|x| &x["stat"]).unwrap_or(&Value::Null);
-        let old = previous_pitcher["people"][0]["fullName"]
+        let old_name = previous_pitcher["people"][0]["fullName"]
             .as_str()
             .context("Could not find old pitcher's name")?
+            .to_owned();
+        let old_last_name = previous_pitcher["people"][0]["lastName"]
+            .as_str()
+            .context("Could not find old pitcher's last name")?
             .to_owned();
         let new_id = play["player"]["id"]
             .as_i64()
             .context("Could not find new pitcher's name")?;
         let new_pitcher = get(&format!("https://statsapi.mlb.com/api/v1/people/{new_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?;
-        let new = new_pitcher["people"][0]["fullName"]
+        let new_name = new_pitcher["people"][0]["fullName"]
             .as_str()
             .context("Could not find new pitcher's name")?
             .to_owned();
@@ -48,10 +53,11 @@ impl PitchingSubstitution {
         let (old_era, _, _) = pitching_stats(previous_pitcher)?;
 
         Ok(Self {
-            old,
+            old_name,
+            old_last_name,
             old_era,
             new_id,
-            new,
+            new_name,
             new_era,
             abbreviation,
             innings_pitched,
@@ -66,17 +72,18 @@ impl PitchingSubstitution {
         self.new_id
     }
 
-    pub fn last_name(&self) -> &str {
-        last_name(&self.old)
+    pub fn old_last_name(&self) -> &str {
+        &self.old_last_name
     }
 }
 
 impl Debug for PitchingSubstitution {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let Self {
-            old,
+            old_name,
+            old_last_name,
             old_era,
-            new,
+            new_name,
             new_era,
             new_id: _,
             abbreviation,
@@ -87,11 +94,10 @@ impl Debug for PitchingSubstitution {
             strikeouts,
             pitches,
         } = self;
-        writeln!(f, "### [{abbreviation} Pitching Change] | {new} ({new_era:.2} ERA) replaces {old} ({old_era:.2} ERA).")?;
-        write!(f, "__{last_name}'s Final Line__:", last_name = self.last_name())?;
+        writeln!(f, "### [{abbreviation} Pitching Change] | {new_name} ({new_era:.2} ERA) replaces {old_name} ({old_era:.2} ERA).")?;
+        write!(f, "__{old_last_name}'s Final Line__:")?;
         writeln!(f, "\n> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeouts}** K")?;
         writeln!(f, "> Pitch Count: **{pitches}**")?;
-        writeln!(f, "")?;
         writeln!(f, "")?;
 
         Ok(())

@@ -2,7 +2,6 @@ use std::fmt::{Display, Formatter};
 use serde_json::Value;
 use anyhow::{Result, Context};
 use crate::get;
-use crate::util::last_name;
 
 pub struct Decisions {
     winner: Win,
@@ -21,7 +20,7 @@ impl Decisions {
                 let line = pitching_line(&winner, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
                 let (wins, losses) = winner["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold((0, 0), |(wins, losses), split| (wins + split["stat"]["wins"].as_i64().unwrap_or(0), losses + split["stat"]["losses"].as_i64().unwrap_or(0)));
                 Win {
-                    name: last_name(winner["people"][0]["fullName"].as_str().context("Could not get pitcher's name")?).to_owned(),
+                    name: winner["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),
                     wins,
                     losses,
                     line,
@@ -33,7 +32,7 @@ impl Decisions {
                 let line = pitching_line(&loser, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
                 let (wins, losses) = loser["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold((0, 0), |(wins, losses), split| (wins + split["stat"]["wins"].as_i64().unwrap_or(0), losses + split["stat"]["losses"].as_i64().unwrap_or(0)));
                 Loss {
-                    name: last_name(loser["people"][0]["fullName"].as_str().context("Could not get pitcher's name")?).to_owned(),
+                    name: loser["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),
                     wins,
                     losses,
                     line,
@@ -45,7 +44,7 @@ impl Decisions {
                     let line = pitching_line(&closer, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
                     let saves = closer["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold(0, |saves, split| saves + split["stat"]["saves"].as_i64().unwrap_or(0));
                     Some(Save {
-                        name: last_name(closer["people"][0]["fullName"].as_str().context("Could not get pitcher's name")?).to_owned(),
+                        name: closer["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),
                         saves,
                         line,
                     })

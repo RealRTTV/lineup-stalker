@@ -6,10 +6,11 @@ pub struct TeamStatsLog {
     pub strikeouts: usize,
     pub pitches_thrown: usize,
     pub pitchers: Vec<String>,
+    pub abbreviation: String,
 }
 
 impl TeamStatsLog {
-    pub fn new(starting_pitcher_name: String) -> Self {
+    pub fn new(starting_pitcher_name: String, abbreviation: String) -> Self {
         Self {
             walks: 0,
             hits: 0,
@@ -18,6 +19,7 @@ impl TeamStatsLog {
             strikeouts: 0,
             pitches_thrown: 0,
             pitchers: vec![starting_pitcher_name],
+            abbreviation,
         }
     }
 

@@ -2,6 +2,7 @@ use core::num::NonZeroUsize;
 use core::fmt::Formatter;
 use core::fmt::Display;
 
+#[derive(Clone)]
 pub struct Standings {
     wins: i64,
     losses: i64,

@@ -1,5 +1,5 @@
 use core::fmt::Write;
-use crate::util::ffi::{Coordinate, GetStdHandle, SetConsoleCursorPosition};
+use crate::set_cursor;
 
 pub mod ffi;
 pub mod statsapi;
@@ -10,6 +10,9 @@ pub mod next_game;
 pub mod decisions;
 pub mod fangraphs;
 pub mod team_stats_log;
+pub mod pitching;
+pub mod hitting;
+pub mod line_score;
 
 pub fn nth(n: usize) -> String {
     let mut buf = String::with_capacity(n.checked_ilog10().map_or(1, |x| x + 1) as usize + 2);
@@ -28,11 +31,8 @@ pub fn nth(n: usize) -> String {
 }
 
 pub fn clear_screen(height: usize) {
-    let handle = unsafe { GetStdHandle(-11_i32 as u32) };
     for n in 0..height {
-        unsafe {
-            SetConsoleCursorPosition(handle, Coordinate { x: 0, y: n as i16 });
-        }
+        set_cursor(0, n);
         println!("{}", unsafe {
             core::str::from_utf8_unchecked(&[b' '; 1024])
         });

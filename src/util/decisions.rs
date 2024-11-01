@@ -3,6 +3,7 @@ use serde_json::Value;
 use anyhow::{Result, Context};
 use crate::get;
 
+#[derive(Clone)]
 pub struct Decisions {
     winner: Win,
     loser: Loss,
@@ -81,6 +82,7 @@ fn pitching_line(splits: &Value, game_id: i64) -> Result<String> {
     Ok(format!("**{ip}** IP, **{hits}** H, **{earned_runs}** ER, **{walks}** BB, **{strikeout_surroundings}{strikeouts}** K{strikeout_surroundings}, **{pitches}** P"))
 }
 
+#[derive(Clone)]
 struct Win {
     name: String,
     wins: i64,
@@ -94,6 +96,7 @@ impl Display for Win {
     }
 }
 
+#[derive(Clone)]
 struct Loss {
     name: String,
     wins: i64,
@@ -107,6 +110,7 @@ impl Display for Loss {
     }
 }
 
+#[derive(Clone)]
 struct Save {
     name: String,
     saves: i64,

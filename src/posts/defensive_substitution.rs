@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use serde_json::Value;
 use crate::util::nth;
 
+#[derive(Clone)]
 pub struct DefensiveSubstitution {
     old: String,
     new: String,
@@ -23,8 +24,8 @@ impl DefensiveSubstitution {
         id_to_object: &FxHashMap<i64, Value>,
     ) -> Result<Self> {
         Ok(Self {
-            old: id_to_object.get(&play["replacedPlayer"]["id"].as_i64().context("Could not find old player in defensive substitution")?).context("Old Player ID wasn't in the roaster for either team")?["person"]["fullName"].as_str().context("Could not find old player's name in defensive substitution")?.to_owned(),
-            new: id_to_object.get(&play["player"]["id"].as_i64().context("Could not find new player in defensive substitution")?).context("New Player ID wasn't in the roaster for either team")?["person"]["fullName"].as_str().context("Could not find new player's name in defensive substitution")?.to_owned(),
+            old: id_to_object.get(&play["replacedPlayer"]["id"].as_i64().context("Could not find old player in defensive substitution")?).context("Old Player ID wasn't in the roaster for either team")?["fullName"].as_str().context("Could not find old player's name in defensive substitution")?.to_owned(),
+            new: id_to_object.get(&play["player"]["id"].as_i64().context("Could not find new player in defensive substitution")?).context("New Player ID wasn't in the roaster for either team")?["fullName"].as_str().context("Could not find new player's name in defensive substitution")?.to_owned(),
             fielding_position: play["position"]["abbreviation"].as_str().context("Could not find player's position in defensive substitution")?.to_owned(),
             ordinal: (play["battingOrder"].as_str().and_then(|s| s.parse::<usize>().ok()).context("Could not get defensive substitution's batting order")? / 100) as u8,
 

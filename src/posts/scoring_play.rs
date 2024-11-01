@@ -2,18 +2,16 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::nth;
-use crate::util::statsapi::{remap_score_event, Score};
+use crate::util::statsapi::{remap_score_event, Score, ScoredRunner};
 
+#[derive(Clone)]
 pub struct ScoringPlay {
     inning: u8,
     top: bool,
     outs: u8,
-    away_abbreviation: String,
-    away_score: i64,
-    home_abbreviation: String,
-    home_score: i64,
+    score: Score,
     rbi: i64,
-    scores: Vec<Score>,
+    scores: Vec<ScoredRunner>,
     raw_event: String,
 }
 
@@ -24,24 +22,23 @@ impl ScoringPlay {
         away_abbreviation: &str,
         all_player_names: &[String],
     ) -> Result<Self> {
+        let inning = play["about"]["inning"]
+            .as_i64()
+            .context("Could not find inning")? as u8;
+        let top = play["about"]["isTopInning"]
+            .as_bool()
+            .context("Could not find inning half")?;
+        let home_score = play["result"]["homeScore"].as_i64().context("Could not find away team's score")? as usize;
+        let away_score = play["result"]["awayScore"].as_i64().context("Could not find away team's score")? as usize;
+        let walkoff = !top && inning >= 9 && home_score > away_score;
+
         Ok(Self {
-            inning: play["about"]["inning"]
-                .as_i64()
-                .context("Could not find inning")? as u8,
-            top: play["about"]["isTopInning"]
-                .as_bool()
-                .context("Could not find inning half")?,
+            inning,
+            top,
             outs: play["count"]["outs"]
                 .as_i64()
                 .context("Could not find outs")? as u8,
-            away_abbreviation: away_abbreviation.to_owned(),
-            away_score: play["result"]["awayScore"]
-                .as_i64()
-                .context("Could not find away team's score")?,
-            home_abbreviation: home_abbreviation.to_owned(),
-            home_score: play["result"]["homeScore"]
-                .as_i64()
-                .context("Could not find away team's score")?,
+            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, true, walkoff, true),
             rbi: play["result"]["rbi"]
                 .as_i64()
                 .context("Could not find the RBI of the play")?,
@@ -70,7 +67,7 @@ impl ScoringPlay {
                     };
 
                     let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run") || value.contains("grand slam");
-                    vec.push(Score::new(value, scoring));
+                    vec.push(ScoredRunner::new(value, scoring));
                 }
                 vec
             },
@@ -80,14 +77,28 @@ impl ScoringPlay {
                 .to_owned(),
         })
     }
+
+    pub fn one_liner(&self) -> String {
+        use std::fmt::Write;
+
+        let mut buf = String::new();
+        let Self { score, .. } = self;
+        let half = if self.top { "Top" } else { "Bot" };
+        let inning = nth(self.inning as usize);
+        write!(&mut buf, "{score} | {half} **{inning}**:", score = score.format_code_block()).unwrap_or(());
+        for score in &self.scores {
+            write!(&mut buf, " {score}").unwrap_or(());
+        }
+        buf
+    }
 }
 
 impl Display for ScoringPlay {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { away_abbreviation, away_score, home_abbreviation, home_score, .. } = self;
+        let Self { score, .. } = self;
         let half = if self.top { "Top" } else { "Bot" };
         let inning = nth(self.inning as usize);
-        write!(f, "`{away_abbreviation} {away_score}-{home_score} {home_abbreviation}` | {half} **{inning}**:")?;
+        write!(f, "`{score}` | {half} **{inning}**:")?;
         for score in &self.scores {
             write!(f, " {score}")?;
         }
@@ -97,13 +108,6 @@ impl Display for ScoringPlay {
 
 impl Debug for ScoringPlay {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let walkoff = !self.top && self.inning >= 9 && self.home_score > self.away_score;
-        let away_abbreviation = &*self.away_abbreviation;
-        let away_score = self.away_score;
-        let home_abbreviation = &*self.home_abbreviation;
-        let home_score = self.home_score;
-        let (away_bold, home_bold) = if self.top { ("**", "") } else { ("", "**") };
-        let walkoff_bold = if walkoff { "**" } else { "" };
         let event = match &*self.raw_event {
             "single" => {
                 if self.rbi == 1 {
@@ -148,6 +152,9 @@ impl Debug for ScoringPlay {
                     format!("{n}RBI double play", n = self.rbi)
                 }
             }
+            "fielders_choice" => {
+                "Fielder's Choice".to_owned()
+            }
             "field_out" => {
                 if self.rbi == 1 {
                     "RBI groundout".to_owned()
@@ -191,7 +198,7 @@ impl Debug for ScoringPlay {
             event => format!("{n}RBI {event}", n = self.rbi),
         };
 
-        writeln!(f, "{away_abbreviation} {away_bold}{away_score}{away_bold}-{home_bold}{home_score}{home_bold} {walkoff_bold}{home_abbreviation}{walkoff_bold} ({event})")?;
+        writeln!(f, "{score:?} ({event})", score = self.score)?;
         writeln!(
             f,
             "{half} **{inning}**, **{outs}** out{out_suffix}.",

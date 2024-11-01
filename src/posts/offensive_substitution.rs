@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use serde_json::Value;
 use crate::util::nth;
 
+#[derive(Clone)]
 pub enum OffensiveSubstitution {
     PinchRunner {
         old: String,
@@ -37,7 +38,7 @@ impl OffensiveSubstitution {
                     .as_i64()
                     .context("Could not find old player in offensive substitution")?,
             )
-            .context("Old Player ID wasn't in the roaster for either team")?["person"]["fullName"]
+            .context("Old Player ID wasn't in the roaster for either team")?["fullName"]
             .as_str()
             .context("Could not find old player's name in offensive substitution")?
             .to_owned();
@@ -47,7 +48,7 @@ impl OffensiveSubstitution {
                     .as_i64()
                     .context("Could not find new player in offensive substitution")?,
             )
-            .context("New Player ID wasn't in the roaster for either team")?["person"]["fullName"]
+            .context("New Player ID wasn't in the roaster for either team")?["fullName"]
             .as_str()
             .context("Could not find new player's name in offensive substitution")?
             .to_owned();

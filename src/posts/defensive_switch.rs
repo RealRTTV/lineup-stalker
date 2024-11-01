@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::util::nth;
 use crate::util::statsapi::to_position_abbreviation;
 
+#[derive(Clone)]
 pub struct DefensiveSwitch {
     name: String,
     old_fielding_position: String,
@@ -28,7 +29,7 @@ impl DefensiveSwitch {
                     .as_i64()
                     .context("Could not find new player in defensive switch")?,
             )
-            .context("New Player ID wasn't in the roaster for either team")?["person"]["fullName"]
+            .context("New Player ID wasn't in the roaster for either team")?["fullName"]
             .as_str()
             .context("Could not find new player's name in defensive switch")?;
         let description = play["details"]["description"]

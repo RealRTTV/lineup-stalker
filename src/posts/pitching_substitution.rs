@@ -3,6 +3,7 @@ use serde_json::Value;
 use anyhow::{Result, Context};
 use crate::{pitching_stats, get};
 
+#[derive(Clone)]
 pub struct PitchingSubstitution {
     old_name: String,
     old_last_name: String,

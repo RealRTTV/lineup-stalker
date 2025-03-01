@@ -1,4 +1,5 @@
 use core::fmt::{Debug, Display, Formatter};
+use std::cmp::Ordering;
 use std::mem::MaybeUninit;
 use anyhow::{Result, Context, anyhow};
 use serde_json::Value;
@@ -42,6 +43,32 @@ impl Display for ScoredRunner {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum BoldingDisplayKind {
+    None,
+    Always,
+    WinningTeam,
+    MostRecentlyScored
+}
+
+impl BoldingDisplayKind {
+    pub fn bolding(self, away_runs: usize, home_runs: usize, home_team_scored_most_recently: bool) -> (&'static str, &'static str) {
+        const BOLD: &'static str = "**";
+        const NONE: &'static str = "";
+
+        match self {
+            Self::None => (NONE, NONE),
+            Self::Always => (BOLD, BOLD),
+            Self::WinningTeam => match away_runs.cmp(&home_runs) {
+                Ordering::Less => (NONE, BOLD),
+                Ordering::Equal => (NONE, NONE),
+                Ordering::Greater => (BOLD, NONE),
+            }
+            Self::MostRecentlyScored => if home_team_scored_most_recently { (NONE, BOLD) } else { (BOLD, NONE) },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Score {
     away_abbreviation: String,
@@ -50,9 +77,8 @@ pub struct Score {
     pub home_runs: usize,
     innings: u8,
     pub home_team_scored_most_recently: bool,
-    bold_score: bool,
-    bold_team: bool,
-    bold_most_recent_score: bool,
+    runs_bolding: BoldingDisplayKind,
+    team_bolding: BoldingDisplayKind,
 }
 
 impl Score {
@@ -62,9 +88,8 @@ impl Score {
                home_runs: usize,
                innings: u8,
                home_team_scored_most_recently: bool,
-               bold_score: bool,
-               bold_team: bool,
-               bold_most_recent_score: bool) -> Self {
+               runs_bolding: BoldingDisplayKind, 
+               team_bolding: BoldingDisplayKind) -> Self {
         Self {
             away_abbreviation,
             away_runs,
@@ -72,18 +97,17 @@ impl Score {
             home_runs,
             innings,
             home_team_scored_most_recently,
-            bold_score,
-            bold_team,
-            bold_most_recent_score,
+            runs_bolding,
+            team_bolding,
         }
     }
 
-    pub fn from_stats_log(home: &TeamStatsLog, away: &TeamStatsLog, innings: u8, home_team_scored_most_recently: bool, bold_score: bool, bold_team: bool, bold_most_recent_score: bool) -> Self {
-        Self::new(away.abbreviation.clone(), away.runs, home.abbreviation.clone(), home.runs, innings, home_team_scored_most_recently, bold_score, bold_team, bold_most_recent_score)
+    pub fn from_stats_log(home: &TeamStatsLog, away: &TeamStatsLog, innings: u8, home_team_scored_most_recently: bool, runs_bolding: BoldingDisplayKind, team_bolding: BoldingDisplayKind) -> Self {
+        Self::new(away.abbreviation.clone(), away.runs, home.abbreviation.clone(), home.runs, innings, home_team_scored_most_recently, runs_bolding, team_bolding)
     }
 
     pub fn format_code_block(&self) -> String {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, home_team_scored_most_recently, bold_score, bold_team, bold_most_recent_score, .. } = self;
+        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, home_team_scored_most_recently, .. } = self;
         let (home_bold, away_bold) = if *home_team_scored_most_recently { ("**", "") } else { ("", "**") };
         format!("{away_bold}`{away_abbreviation} {away_runs}`{away_bold} - {home_bold}`{home_abbreviation} {home_runs}`{home_bold}")
     }
@@ -91,11 +115,9 @@ impl Score {
 
 impl Debug for Score {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, home_team_scored_most_recently, bold_score, bold_team, bold_most_recent_score } = self;
-        let away_abbreviation_bold = if away_runs > home_runs && *bold_team { "**" } else { "" };
-        let home_abbreviation_bold = if home_runs > away_runs && *bold_team { "**" } else { "" };
-        let away_score_bold = if away_runs > home_runs && (*bold_score || !*home_team_scored_most_recently && *bold_most_recent_score) { "**" } else { "" };
-        let home_score_bold = if home_runs > away_runs && (*bold_score || *home_team_scored_most_recently && *bold_most_recent_score) { "**" } else { "" };
+        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, home_team_scored_most_recently, runs_bolding, team_bolding } = self;
+        let (away_abbreviation_bold, home_abbreviation_bold) = team_bolding.bolding(*away_runs, *home_runs, *home_team_scored_most_recently);
+        let (away_score_bold, home_score_bold) = runs_bolding.bolding(*away_runs, *home_runs, *home_team_scored_most_recently);
         let extra_innings_suffix = if *innings > 9 { format!(" ({innings})") } else { String::new() };
         write!(f, "{away_abbreviation_bold}{away_abbreviation}{away_abbreviation_bold} {away_score_bold}{away_runs}{away_score_bold}-{home_score_bold}{home_runs}{home_score_bold} {home_abbreviation_bold}{home_abbreviation}{home_abbreviation_bold}{extra_innings_suffix}")
     }

@@ -44,8 +44,15 @@ impl WobaConstants {
 
 fn get_woba_constants() -> WobaConstants {
     let raw = ureq::post("https://www.fangraphs.com/guts.aspx?type=cn").call().expect("Got wOBA constants successfully").into_string().expect("Response was a valid string");
-    let current_year = Local::now().year();
-    let start = raw.find(&format!(r#"<td class="grid_line_regular">{current_year}"#)).expect("Expected index from guts board");
+    let mut current_year = Local::now().year();
+    let start = {
+        loop {
+            if let Some(data) = raw.find(&format!(r#"<td class="grid_line_regular">{current_year}"#)) {
+                break data;
+            }
+            current_year -= 1;
+        }
+    };
     let end = raw.find(&format!(r#"<td class="grid_line_regular">{last_year}"#, last_year = current_year - 1)).expect("Expected index from guts board");
     let year = raw.split_at(start).1.split_at(end - start).0.split_at(r#"<td class="grid_line_regular">XXXX</td>"#.len()).1;
     let last_td = year.rfind(r#"</td>"#).expect("Expected at least one </td> tag");

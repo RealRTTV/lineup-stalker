@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter, Write};
-use anyhow::Context;
+use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::team_stats_log::TeamStatsLog;
 
@@ -11,7 +11,7 @@ pub struct LineScore {
 }
 
 impl LineScore {
-    pub fn new(innings: &[Value], away: &TeamStatsLog, home: &TeamStatsLog, top: bool) -> anyhow::Result<Self> {
+    pub fn new(innings: &[Value], away: &TeamStatsLog, home: &TeamStatsLog, top: bool) -> Result<Self> {
         let mut header = "**`    ".to_owned();
         let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = away.abbreviation);
         let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = home.abbreviation);

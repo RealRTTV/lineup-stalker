@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::nth;
-use crate::util::statsapi::{remap_score_event, Score, ScoredRunner};
+use crate::util::statsapi::{remap_score_event, BoldingDisplayKind, Score, ScoredRunner};
 
 #[derive(Clone)]
 pub struct ScoringPlayEvent {
@@ -43,7 +43,7 @@ impl ScoringPlayEvent {
             top: parent["about"]["isTopInning"]
                 .as_bool()
                 .context("Could not find inning half")?,
-            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, true, walkoff, true),
+            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, BoldingDisplayKind::MostRecentlyScored, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
             scores: {
                 let description = play["details"]["description"]
                     .as_str()

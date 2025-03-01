@@ -15,11 +15,11 @@ pub struct FinalCard {
     masterpieces: String,
     line_score: LineScore,
     scoring_plays: Vec<String>,
-    decisions: Decisions,
+    decisions: Option<Decisions>,
 }
 
 impl FinalCard {
-    pub fn new(score: Score, standings: Standings, record: RecordAgainst, next_game: Option<NextGame>, masterpieces: String, line_score: LineScore, scoring_plays: Vec<String>, decisions: Decisions) -> Self {
+    pub fn new(score: Score, standings: Standings, record: RecordAgainst, next_game: Option<NextGame>, masterpieces: String, line_score: LineScore, scoring_plays: Vec<String>, decisions: Option<Decisions>) -> Self {
         Self {
             score,
             standings,
@@ -48,8 +48,10 @@ impl Display for FinalCard {
         writeln!(f, "{line_score}")?;
         writeln!(f, "### __Scoring Plays__")?;
         writeln!(f, "{}", scoring_plays.join("\n"))?;
-        writeln!(f, "### __Pitcher Decisions__")?;
-        writeln!(f, "{decisions}")?;
+        if let Some(decisions) = decisions {
+            writeln!(f, "### __Pitcher Decisions__")?;
+            writeln!(f, "{decisions}")?;
+        }
         write!(f, "> ")?;
 
         Ok(())

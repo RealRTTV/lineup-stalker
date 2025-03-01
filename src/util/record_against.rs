@@ -1,5 +1,5 @@
 use core::fmt::{Display, Formatter};
-use crate::util::statsapi::Score;
+use crate::util::statsapi::{BoldingDisplayKind, Score};
 
 #[derive(Clone)]
 pub struct RecordAgainst {
@@ -9,7 +9,7 @@ pub struct RecordAgainst {
 impl RecordAgainst {
     pub fn new(our_abbreviation: &str, their_abbreviation: &str) -> Self {
         Self {
-            inner: Score::new(our_abbreviation.to_owned(), 0, their_abbreviation.to_owned(), 0, 0, false, false, true, true)
+            inner: Score::new(our_abbreviation.to_owned(), 0, their_abbreviation.to_owned(), 0, 0, false, BoldingDisplayKind::MostRecentlyScored, BoldingDisplayKind::WinningTeam)
         }
     }
 

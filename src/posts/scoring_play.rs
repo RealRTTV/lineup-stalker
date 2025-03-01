@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::nth;
-use crate::util::statsapi::{remap_score_event, Score, ScoredRunner};
+use crate::util::statsapi::{remap_score_event, BoldingDisplayKind, Score, ScoredRunner};
 
 #[derive(Clone)]
 pub struct ScoringPlay {
@@ -38,7 +38,7 @@ impl ScoringPlay {
             outs: play["count"]["outs"]
                 .as_i64()
                 .context("Could not find outs")? as u8,
-            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, true, walkoff, true),
+            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, BoldingDisplayKind::MostRecentlyScored, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
             rbi: play["result"]["rbi"]
                 .as_i64()
                 .context("Could not find the RBI of the play")?,

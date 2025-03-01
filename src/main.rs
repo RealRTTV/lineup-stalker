@@ -1,4 +1,3 @@
-#![feature(lazy_cell)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(result_flattening)]
@@ -38,7 +37,7 @@ use crate::util::pitching::PitcherLineupEntry;
 use crate::util::record_against::RecordAgainst;
 use crate::util::standings::Standings;
 use crate::util::stat::HittingStat;
-use crate::util::statsapi::{pitching_stats, modify_abbreviation, get_last_lineup_underscores, Score};
+use crate::util::statsapi::{pitching_stats, modify_abbreviation, get_last_lineup_underscores, Score, BoldingDisplayKind};
 use crate::util::team_stats_log::TeamStatsLog;
 
 pub const TIMEZONE: Tz = America__Toronto;
@@ -670,9 +669,9 @@ unsafe fn posts_loop(
             }
 
             let pitching_masterpiece = TeamStatsLog::generate_masterpiece(&home, &away, innings.len(), &home.abbreviation).unwrap_or(String::new()) + &TeamStatsLog::generate_masterpiece(&away, &home, innings.len(), &away.abbreviation).unwrap_or(String::new());
-            let decisions = Decisions::new(&response)?;
+            let decisions = match Decisions::new(&response) { Ok(x) => Some(x), Err(e) => { eprintln!("Error getting pitcher decisions: {e}"); None } };
 
-            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, innings.len() as u8, false, walkoff, true, false), standings, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
+            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, innings.len() as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), standings, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
 
             while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
             return Ok(())
@@ -731,6 +730,8 @@ fn lines(
                 .context("Could not get innings")?
                 .len();
 
+            let walkoff = previous_innings >= 9 && home_runs > away_runs;
+
             let previous_team_lineup = previous_game["liveData"]["boxscore"]["teams"][if home {
                 if previous_home_abbreviation == home_abbreviation {
                     "home"
@@ -744,7 +745,7 @@ fn lines(
                     "home"
                 }
             }].clone();
-            (Some(Score::new(previous_away_abbreviation, away_runs, previous_home_abbreviation, home_runs, previous_innings as u8, false, false, true, false)), previous_team_lineup)
+            (Some(Score::new(previous_away_abbreviation, away_runs, previous_home_abbreviation, home_runs, previous_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None })), previous_team_lineup)
         } else {
             (None, Value::Null)
         };

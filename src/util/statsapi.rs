@@ -25,6 +25,42 @@ impl ScoredRunner {
     pub fn play(&self) -> &str {
         &self.play
     }
+    
+    pub fn from_description(description: &str, all_player_names: &[String]) -> Vec<Self> {
+        let scores = description
+            .split_once(": ")
+            .map_or(description, |(_, x)| x);
+        // spec changed
+        let mut iter = if scores.contains("  ") {
+            scores
+                .split("  ")
+                .map(str::trim)
+                .filter(|str| !str.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<String>>()
+        } else {
+            scores
+                .split(". ")
+                .map(str::trim)
+                .filter(|str| !str.is_empty())
+                .map(str::to_owned)
+                .map(|s| if s.ends_with('.') { s } else { s + "." })
+                .collect::<Vec<String>>()
+        }.into_iter();
+        let mut vec = Vec::new();
+        while let Some(value) = iter.next() {
+            // names with a . in them (ex: Vladimir Guerrero Jr.) are broken in the formatter, so it has to be patched
+            let value = if all_player_names.iter().any(|name| value == *name) && let Some(next) = iter.next() {
+                remap_score_event(&format!("{value} {next}"), all_player_names, )
+            } else {
+                remap_score_event(&value, all_player_names)
+            };
+
+            let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run") || value.contains("grand slam");
+            vec.push(ScoredRunner::new(value, scoring));
+        }
+        vec
+    }
 }
 
 impl Debug for ScoredRunner {
@@ -216,7 +252,7 @@ pub fn get_last_lineup_underscores(previous_lineup: &Value) -> Result<[HitterLin
 }
 
 pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool, team_name: &str) -> Result<[HitterLineupEntry; 9]> {
-    let mut players = MaybeUninit::uninit_array::<9>();
+    let mut players = [const { MaybeUninit::uninit() }; 9];
     for (_, player) in root["players"]
         .as_object()
         .context("Hitters didn't exist")?
@@ -264,15 +300,10 @@ pub fn remap_score_event(event: &str, all_player_names: &[String]) -> String {
 
     loop {
         event = if let Some((left, right)) = event.split_once(" left fielder") {
-            let Some(right) = remove_prefix(
-                right.trim_start(),
-                all_player_names.iter().map(String::as_str),
-            ) else {
-                break;
-            };
+            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
             format!("{left} left field{right}")
         } else if let Some((left, right)) = event.split_once(" center fielder") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str), ) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
             format!("{left} center field{right}")
         } else if let Some((left, right)) = event.split_once(" right fielder") {
             let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };

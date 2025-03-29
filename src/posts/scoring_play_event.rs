@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::nth;
-use crate::util::statsapi::{remap_score_event, BoldingDisplayKind, Score, ScoredRunner};
+use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
 
 #[derive(Clone)]
 pub struct ScoringPlayEvent {
@@ -23,56 +23,24 @@ impl ScoringPlayEvent {
         all_player_names: &[String],
         event: &'static str,
     ) -> Result<Self> {
-        let inning = play["about"]["inning"]
+        let inning = parent["about"]["inning"]
             .as_i64()
-            .context("Could not find inning")? as u8;
-        let top = play["about"]["isTopInning"]
+            .context("Could not find inning (scoring play event)")? as u8;
+        let top = parent["about"]["isTopInning"]
             .as_bool()
             .context("Could not find inning half")?;
-        let home_score = play["result"]["homeScore"].as_i64().context("Could not find away team's score")? as usize;
-        let away_score = play["result"]["awayScore"].as_i64().context("Could not find away team's score")? as usize;
+        let home_score = parent["result"]["homeScore"].as_i64().context("Could not find home team's score")? as usize;
+        let away_score = parent["result"]["awayScore"].as_i64().context("Could not find away team's score")? as usize;
         let walkoff = !top && inning >= 9 && home_score > away_score;
 
         Ok(Self {
-            inning: parent["about"]["inning"]
-                .as_i64()
-                .context("Could not find inning")? as u8,
+            inning,
             outs: play["count"]["outs"]
                 .as_i64()
                 .context("Could not find outs")? as u8,
-            top: parent["about"]["isTopInning"]
-                .as_bool()
-                .context("Could not find inning half")?,
+            top,
             score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, BoldingDisplayKind::MostRecentlyScored, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
-            scores: {
-                let description = play["details"]["description"]
-                    .as_str()
-                    .context("Could not get play description")?;
-                let mut vec = Vec::new();
-                let mut iter = description
-                    .split_once(": ")
-                    .map_or(description, |(_, x)| x)
-                    .split("  ")
-                    .map(str::trim)
-                    .filter(|str| !str.is_empty());
-                while let Some(value) = iter.next() {
-                    let value = if all_player_names.iter().any(|name| value == *name) {
-                        remap_score_event(
-                            &format!(
-                                "{value} {}",
-                                iter.next().context("Play unexpectedly ended")?
-                            ),
-                            all_player_names,
-                        )
-                    } else {
-                        remap_score_event(value, all_player_names)
-                    };
-
-                    let scoring = value.contains(" scores.") || value.contains(" homers") || value.contains("home run");
-                    vec.push(ScoredRunner::new(value, scoring))
-                }
-                vec
-            },
+            scores: ScoredRunner::from_description(play["details"]["description"].as_str().context("Could not get play description")?, all_player_names),
             event,
         })
     }

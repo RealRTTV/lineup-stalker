@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
 use serde_json::Value;
 use crate::util::nth;
-use crate::util::statsapi::{remap_score_event, BoldingDisplayKind, Score, ScoredRunner};
+use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
 
 #[derive(Clone)]
 pub struct ScoringPlay {
@@ -24,7 +24,7 @@ impl ScoringPlay {
     ) -> Result<Self> {
         let inning = play["about"]["inning"]
             .as_i64()
-            .context("Could not find inning")? as u8;
+            .context("Could not find inning (scoring play)")? as u8;
         let top = play["about"]["isTopInning"]
             .as_bool()
             .context("Could not find inning half")?;
@@ -42,35 +42,7 @@ impl ScoringPlay {
             rbi: play["result"]["rbi"]
                 .as_i64()
                 .context("Could not find the RBI of the play")?,
-            scores: {
-                let description = play["result"]["description"]
-                    .as_str()
-                    .context("Play description didn't exist")?;
-                let mut vec = Vec::new();
-                let mut iter = description
-                    .split_once(": ")
-                    .map_or(description, |(_, x)| x)
-                    .split("  ")
-                    .map(str::trim)
-                    .filter(|str| !str.is_empty());
-                while let Some(value) = iter.next() {
-                    let value = if all_player_names.iter().any(|name| value == *name) {
-                        remap_score_event(
-                            &format!(
-                                "{value} {}",
-                                iter.next().context("Play unexpectedly ended")?
-                            ),
-                            all_player_names,
-                        )
-                    } else {
-                        remap_score_event(value, all_player_names)
-                    };
-
-                    let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run") || value.contains("grand slam");
-                    vec.push(ScoredRunner::new(value, scoring));
-                }
-                vec
-            },
+            scores: ScoredRunner::from_description(play["result"]["description"].as_str().context("Could not get play description")?, all_player_names),
             raw_event: play["result"]["eventType"]
                 .as_str()
                 .context("Could not find event type")?

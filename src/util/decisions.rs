@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use serde_json::Value;
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, anyhow};
 use crate::get;
 
 #[derive(Clone)]
@@ -13,12 +13,13 @@ pub struct Decisions {
 impl Decisions {
     pub fn new(response: &Value) -> Result<Self> {
         let game_id = response["gameData"]["game"]["pk"].as_i64().context("Could not get game id")?;
+        let is_spring_training = response["gameData"]["game"]["type"].as_str().context("Could not get game type")? == "S";
 
         Ok(Self {
             winner: {
                 let pitcher_id = response["liveData"]["decisions"]["winner"]["id"].as_i64().context("Could not get winner's id")?;
                 let winner = get(&format!("https://statsapi.mlb.com/api/v1/people/{pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?;
-                let line = pitching_line(&winner, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
+                let line = pitching_line(&winner, game_id).or_else(if is_spring_training { |_| Ok("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned()) } else { |e| Err(e) })?;
                 let (wins, losses) = winner["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold((0, 0), |(wins, losses), split| (wins + split["stat"]["wins"].as_i64().unwrap_or(0), losses + split["stat"]["losses"].as_i64().unwrap_or(0)));
                 Win {
                     name: winner["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),
@@ -30,7 +31,7 @@ impl Decisions {
             loser: {
                 let pitcher_id = response["liveData"]["decisions"]["loser"]["id"].as_i64().context("Could not get loser's id")?;
                 let loser = get(&format!("https://statsapi.mlb.com/api/v1/people/{pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?;
-                let line = pitching_line(&loser, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
+                let line = pitching_line(&loser, game_id).or_else(if is_spring_training { |_| Ok("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned()) } else { |e| Err(e) })?;
                 let (wins, losses) = loser["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold((0, 0), |(wins, losses), split| (wins + split["stat"]["wins"].as_i64().unwrap_or(0), losses + split["stat"]["losses"].as_i64().unwrap_or(0)));
                 Loss {
                     name: loser["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),
@@ -42,7 +43,7 @@ impl Decisions {
             save: {
                 if let Some(pitcher_id) = response["liveData"]["decisions"]["save"]["id"].as_i64() {
                     let closer = get(&format!("https://statsapi.mlb.com/api/v1/people/{pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?;
-                    let line = pitching_line(&closer, game_id).unwrap_or("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned());
+                    let line = pitching_line(&closer, game_id).or_else(if is_spring_training { |_| Ok("**0.0** IP, **0** H, **0** ER, **0** BB, **0** K, **0** P".to_owned()) } else { |e| Err(e) })?;
                     let saves = closer["people"][0]["stats"][0]["splits"].as_array().context("Could not get pitcher's splits")?.iter().fold(0, |saves, split| saves + split["stat"]["saves"].as_i64().unwrap_or(0));
                     Some(Save {
                         name: closer["people"][0]["lastName"].as_str().context("Could not get pitcher's name")?.to_owned(),

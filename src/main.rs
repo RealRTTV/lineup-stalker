@@ -161,7 +161,11 @@ unsafe fn main0() -> Result<()> {
 }
 
 fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
-    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, default_color_escape: &str, always_use_default_color: bool) -> Result<()> {
+    const PREFERRED_TEAMS: &[&str] = &[
+        "Toronto Blue Jays"
+    ];
+
+    fn print_game(game: &Value, idx: usize, handle: *mut c_void, idx_width: usize, default_color_escape: &str, preferred_team_color_escape: &str, always_use_default_color: bool) -> Result<()> {
         let idx = idx + 1;
         let home = game["teams"]["home"]["team"]["name"]
             .as_str()
@@ -169,6 +173,11 @@ fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
         let away = game["teams"]["away"]["team"]["name"]
             .as_str()
             .context("Away Team name didn't exist")?;
+        let (color_escape, home_color_escape, away_color_escape) = if PREFERRED_TEAMS.contains(&home) || PREFERRED_TEAMS.contains(&away) {
+            (preferred_team_color_escape, preferred_team_color_escape, preferred_team_color_escape)
+        } else {
+            (default_color_escape, get_team_color_escape(home), get_team_color_escape(away))
+        };
         let time = chrono::DateTime::<Local>::from_str(
             game["gameDate"]
                 .as_str()
@@ -180,13 +189,9 @@ fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
             .context("Error converting to timezone")?
             .format("%H:%M %Z");
         if always_use_default_color {
-            println!("\x1B[{default_color_escape}m  {idx: >idx_width$}. {home} vs. {away} @ {timestamp}\x1B[0m");
+            println!("\x1B[{color_escape}m  {idx: >idx_width$}. {home} vs. {away} @ {timestamp}\x1B[{color_escape}m");
         } else {
-            println!(
-                "  {idx: >idx_width$}. \x1B[{home_color_escape}m{home}\x1B[0m vs. \x1B[{away_color_escape}m{away}\x1B[0m @ {timestamp}",
-                home_color_escape = get_team_color_escape(home),
-                away_color_escape = get_team_color_escape(away),
-            );
+            println!("\x1B[{color_escape}m  {idx: >idx_width$}. \x1B[{home_color_escape}m{home}\x1B[{color_escape}m vs. \x1B[{away_color_escape}m{away}\x1B[{color_escape}m @ {timestamp}");
         }
         unsafe {
             SetConsoleTextAttribute(handle, 7);
@@ -211,7 +216,7 @@ fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
         println!("[{}] Please select a game ordinal to wait on for lineups (use arrows for movement and dates): \n", date.format("%A, %B %e %Y"));
         for (idx, game) in games.iter().enumerate() {
             ids.push(game["gamePk"].as_i64().context("Game ID didn't exist")?);
-            print_game(game, idx, handle, idx_width, "0", false)?;
+            print_game(game, idx, handle, idx_width, "0", "38;5;10", false)?;
         }
         set_cursor(0, 2);
         print!("> ");
@@ -331,9 +336,9 @@ fn get_id() -> Result<(usize, bool, HittingStat, HittingStat)> {
                 set_cursor(0, 2);
                 for (current_idx, game) in games.iter().enumerate() {
                     if current_idx == idx {
-                        print_game(game, current_idx, handle, idx_width, "0", false)?;
+                        print_game(game, current_idx, handle, idx_width, "0", "38;5;10", false)?;
                     } else {
-                        print_game(game, current_idx, handle, idx_width, "90", true)?;
+                        print_game(game, current_idx, handle, idx_width, "90", "38;5;9", true)?;
                     }
                     std::thread::sleep(Duration::from_millis(35 - current_idx as u64));
                 }
@@ -636,7 +641,7 @@ unsafe fn posts_loop(
 
         previous_play_plus_play_event_len = all_plays.iter().map(|play| play["playEvents"].as_array().map_or(0, |vec| vec.len()) + play["about"]["isComplete"].as_bool().is_some_and(identity) as usize).sum();
 
-        let response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
+        let mut response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
         if !response["liveData"]["decisions"]["winner"].is_null() {
             let linescore = &response["liveData"]["linescore"];
             let top = linescore["isTopInning"]
@@ -645,6 +650,8 @@ unsafe fn posts_loop(
             let innings = linescore["innings"]
                 .as_array()
                 .context("Could not get innings")?;
+            
+            let num_innings = innings.len();
 
             for inning in innings {
                 home.add_runs(inning["home"]["runs"].as_i64().unwrap_or(0) as usize);
@@ -669,9 +676,20 @@ unsafe fn posts_loop(
             }
 
             let pitching_masterpiece = TeamStatsLog::generate_masterpiece(&home, &away, innings.len(), &home.abbreviation).unwrap_or(String::new()) + &TeamStatsLog::generate_masterpiece(&away, &home, innings.len(), &away.abbreviation).unwrap_or(String::new());
-            let decisions = match Decisions::new(&response) { Ok(x) => Some(x), Err(e) => { eprintln!("Error getting pitcher decisions: {e}"); None } };
+            let decisions = loop {
+                match Decisions::new(&response) {
+                    Ok(decisions) => {
+                        response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
+                        break Some(decisions)
+                    },
+                    Err(e) => {
+                        eprintln!("Error getting pitcher decisions: {e}");
+                        std::thread::sleep(Duration::from_secs(5));
+                    },
+                }
+            };
 
-            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, innings.len() as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), standings, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
+            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, num_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), standings, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
 
             while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
             return Ok(())

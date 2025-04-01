@@ -19,11 +19,13 @@ const SPECIFY_TEAM_LOCATIONS: &[&str] = &["New York", "Los Angeles", "Chicago"];
 impl NextGame {
     pub fn new(game: &Value, our_id: i64) -> Result<Self> {
         let home_id = game["teams"]["home"]["team"]["id"].as_i64().context("Could not get home Team ID")?;
-        let home_team = get(&format!("https://statsapi.mlb.com/api/v1/teams/{home_id}"))?;
-        let location_name = home_team["teams"][0]["franchiseName"].as_str().context("Could not get team franchise name")?.to_string();
-        let full_name = home_team["teams"][0]["name"].as_str().context("Could not get team full name")?.to_string();
+        let away_id = game["teams"]["away"]["team"]["id"].as_i64().context("Could not get away Team ID")?;
+        let home = home_id == our_id;
+        let opponent_team = get(&format!("https://statsapi.mlb.com/api/v1/teams/{}", if home { away_id } else { home_id }))?;
+        let location_name = opponent_team["teams"][0]["franchiseName"].as_str().context("Could not get team franchise name")?.to_string();
+        let full_name = opponent_team["teams"][0]["name"].as_str().context("Could not get team full name")?.to_string();
         Ok(Self {
-            home: home_id == our_id,
+            home,
             location: if SPECIFY_TEAM_LOCATIONS.contains(&location_name.as_str()) { full_name } else { location_name },
             utc: DateTime::<Utc>::from_str(game["gameDate"].as_str().context("Game Date Time didn't exist")?)?.naive_utc(),
         })

@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use serde_json::Value;
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, Context};
 use crate::get;
 
 #[derive(Clone)]

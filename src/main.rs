@@ -679,11 +679,11 @@ unsafe fn posts_loop(
             let decisions = loop {
                 match Decisions::new(&response) {
                     Ok(decisions) => {
-                        response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
                         break Some(decisions)
                     },
                     Err(e) => {
                         eprintln!("Error getting pitcher decisions: {e}");
+                        response = get(&format!("https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"))?;
                         std::thread::sleep(Duration::from_secs(5));
                     },
                 }

@@ -43,52 +43,80 @@ impl WobaConstants {
 }
 
 fn get_woba_constants() -> WobaConstants {
-    let raw = ureq::post("https://www.fangraphs.com/guts.aspx?type=cn").call().expect("Got wOBA constants successfully").into_string().expect("Response was a valid string");
+    let raw_owned = ureq::get("https://www.fangraphs.com/guts.aspx?type=cn").call().expect("Got wOBA constants successfully").into_string().expect("Response was a valid string");
     let mut current_year = Local::now().year();
-    let start = {
-        loop {
-            if let Some(data) = raw.find(&format!(r#"<td class="grid_line_regular">{current_year}"#)) {
-                break data;
+    let start = 'a: {
+        while current_year > 0 {
+            if let Some(start) = raw_owned.find(&format!(r#"="Season" class="align-right fixed">{current_year}</td>"#)) {
+                break 'a start;
             }
             current_year -= 1;
         }
+        panic!("Failed to get WOBA constants, no years found.")
     };
-    let end = raw.find(&format!(r#"<td class="grid_line_regular">{last_year}"#, last_year = current_year - 1)).expect("Expected index from guts board");
-    let year = raw.split_at(start).1.split_at(end - start).0.split_at(r#"<td class="grid_line_regular">XXXX</td>"#.len()).1;
-    let last_td = year.rfind(r#"</td>"#).expect("Expected at least one </td> tag");
-    let year = year.split_at(last_td + r#"</td>"#.len()).0;
-    let year = year.replace("</td><td class=\"grid_line_regular\" align=\"right\">", "</td>\n<td class=\"grid_line_regular\" align=\"right\">");
-    let stats = year.split("\n").map(|line| line.strip_prefix(r#"<td class="grid_line_regular" align="right">"#).unwrap_or(line).strip_suffix(r#"</td>"#).unwrap_or(line).to_string()).collect::<Vec<_>>();
+    let (_, raw) = raw_owned.split_at(start);
+    let (raw, _) = raw.split_once(&r#"</tr>"#).expect("Expected index from guts board");
+    let map = parse_table_row_all_nums(raw);
 
     WobaConstants {
-        lgwOBA: stats[0].parse::<f64>().unwrap(),
-        wOBAScale: stats[1].parse::<f64>().unwrap(),
-        wBB: stats[2].parse::<f64>().unwrap(),
-        wHBP: stats[3].parse::<f64>().unwrap(),
-        w1B: stats[4].parse::<f64>().unwrap(),
-        w2B: stats[5].parse::<f64>().unwrap(),
-        w3B: stats[6].parse::<f64>().unwrap(),
-        wHR: stats[7].parse::<f64>().unwrap(),
-        runSB: stats[8].parse::<f64>().unwrap(),
-        runCS: stats[9].parse::<f64>().unwrap(),
-        lgRPA: stats[10].parse::<f64>().unwrap(),
+        lgwOBA: map["wOBA"],
+        wOBAScale: map["wOBAScale"],
+        wBB: map["wBB"],
+        wHBP: map["wHBP"],
+        w1B: map["w1B"],
+        w2B: map["w2B"],
+        w3B: map["w3B"],
+        wHR: map["wHR"],
+        runSB: map["runSB"],
+        runCS: map["runCS"],
+        lgRPA: map["R/PA"],
     }
 }
 
 fn get_ballpark_adjustments() -> FxHashMap<String, f64> {
-    let raw = ureq::post("https://www.fangraphs.com/guts.aspx?type=pf&season=2023&teamid=0&sort=2,d").call().expect("Got ballpark factors successfully").into_string().expect("Response was a valid string");
-    let start = raw.find(r#"</thead><tbody>"#).expect("Expected index from guts board");
-    let end = raw.find(r#"</table><div id="GutsBoard1_dg1_SharedCalendarContainer" style="display:none;">"#).expect("Expected index from guts board");
-    let data = raw.split_at(start + r#"</thead><tbody>"#.len()).1.split_at(end - start - r#"</thead><tbody>"#.len()).0.trim_end();
-    let data = data.strip_suffix(r#"</tbody>"#).unwrap_or(data).trim_end();
-    let data = data.strip_suffix(r#"</tr>"#).unwrap_or(data).trim_end();
+    let raw_owned = ureq::get("https://www.fangraphs.com/guts.aspx?type=pf&season=2023&teamid=0&sort=2,d").call().expect("Got ballpark factors successfully").into_string().expect("Response was a valid string");
+    let (_, raw) = raw_owned.split_once(r#"</thead><tbody>"#).expect("Incorrect specification");
+    let (raw, _) = raw.split_once(r#"</tbody>"#).expect("Incorrect specification");
+    parse_whole_table(raw).into_iter().map(|map| {
+        let team_name = map["Team"].as_ref().unwrap_err().to_owned();
+        let &adjustment = map["1yr"].as_ref().unwrap();
+        (team_name, adjustment)
+    }).collect()
+}
 
-    data.split("</tr>").map(|line| {
+fn parse_whole_table(raw: &str) -> Vec<FxHashMap<String, Result<f64, String>>> {
+    let raw = raw.trim_end().strip_suffix(r#"</tr>"#).map_or(raw, str::trim_end).trim_start();
+    raw.split("</tr>").map(parse_table_row).collect::<Vec<FxHashMap<String, Result<f64, String>>>>()
+}
+
+#[must_use]
+fn parse_table_row(raw: &str) -> FxHashMap<String, Result<f64, String>> {
+    let raw = raw.trim_end().strip_suffix(r#"</td>"#).map_or(raw, str::trim_end).trim_start();
+    raw.split("</td>").map(|line| {
         let line = line.trim();
-        let team_name = line.split_once(r#"</td><td class="grid_line_regular">"#).expect("Could not find ballpark adjustment").1.split_once(r#"</td><td class="grid_line_regular rgSorted" align="right""#).expect("Could not find ballpark adjustment").0;
-        let adjustment = line.split_once(r##"</td><td class="grid_line_regular rgSorted" align="right" bgcolor="#E5E5E5">"##).expect("Could find ballpark adjustment").1.split_once(r#"</td>"#).expect("Could find ballpark adjustment").0.parse::<i64>().expect("Valid i64 for ballpark adjustment") as f64 / 100.0;
-        (team_name.to_string(), adjustment)
-    }).collect::<FxHashMap<String, f64>>()
+        let line = line.replace(r#" class="align-right""#, "").replace(r#" class="align-right fixed""#, "").replace(r#" class="align-left fixed""#, "").replace(r#" class="align-left""#, "");
+        let (_, line) = line.rsplit_once(r#"=""#).expect("Incorrect specification");
+        let (key, value) = line.split_once(r#"">"#).expect("Incorrect specification");
+        (key.to_owned(), value.parse().ok().ok_or_else(|| value.to_owned()))
+    }).collect()
+}
+
+#[allow(unused)]
+fn parse_whole_table_all_nums(raw: &str) -> Vec<FxHashMap<String, f64>> {
+    let raw = raw.trim_end().strip_suffix(r#"</tr>"#).map_or(raw, str::trim_end).trim_start();
+    raw.split("</tr>").map(parse_table_row_all_nums).collect::<Vec<FxHashMap<String, f64>>>()
+}
+
+#[must_use]
+fn parse_table_row_all_nums(raw: &str) -> FxHashMap<String, f64> {
+    let raw = raw.trim_end().strip_suffix(r#"</td>"#).map_or(raw, str::trim_end).trim_start();
+    raw.split("</td>").map(|line| {
+        let line = line.trim();
+        let line = line.replace(r#" class="align-right""#, "").replace(r#" class="align-right fixed""#, "").replace(r#" class="align-left fixed""#, "").replace(r#" class="align-left""#, "");
+        let (_, line) = line.rsplit_once(r#"=""#).expect("Incorrect specification");
+        let (key, value) = line.split_once(r#"">"#).expect("Incorrect specification");
+        (key.to_owned(), value.parse().expect("Expected all numbers"))
+    }).collect()
 }
 
 pub static WOBA_CONSTANTS: LazyLock<WobaConstants> = LazyLock::new(get_woba_constants);

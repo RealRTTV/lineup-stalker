@@ -1,6 +1,5 @@
 use core::fmt::{Debug, Display, Formatter};
 use std::cmp::Ordering;
-use std::mem::MaybeUninit;
 use anyhow::{Result, Context, anyhow};
 use serde_json::Value;
 use crate::util::hide;
@@ -252,7 +251,7 @@ pub fn get_last_lineup_underscores(previous_lineup: &Value) -> Result<[HitterLin
 }
 
 pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool, team_name: &str) -> Result<[HitterLineupEntry; 9]> {
-    let mut players = [const { MaybeUninit::uninit() }; 9];
+    let mut players: [Option<HitterLineupEntry>; 9] = [const { None }; 9];
     for (_, player) in root["players"]
         .as_object()
         .context("Hitters didn't exist")?
@@ -273,9 +272,9 @@ pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, s
         let position = player["position"]["abbreviation"].as_str().context("Hitter's first position didn't exist")?;
         let first_stat = first_stat.get(&player["seasonStats"]["batting"], team_name)?;
         let second_stat = second_stat.get(&player["seasonStats"]["batting"], team_name)?;
-        players[batting_order as usize / 100 - 1].write(HitterLineupEntry::new(name.to_owned(), position.to_owned(), (batting_order / 100) as u8, if show_stats { Some((first_stat, second_stat)) } else { None }));
+        players[batting_order as usize / 100 - 1] = Some(HitterLineupEntry::new(name.to_owned(), position.to_owned(), (batting_order / 100) as u8, if show_stats { Some((first_stat, second_stat)) } else { None }));
     }
-    Ok(unsafe { MaybeUninit::array_assume_init(players) })
+    Ok(players.into_iter().collect::<Option<Vec<HitterLineupEntry>>>().context("Hitter was missing from lineup")?.try_into().ok().context("what the fuck")?)
 }
 
 pub fn remap_score_event(event: &str, all_player_names: &[String]) -> String {

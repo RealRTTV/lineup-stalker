@@ -1,5 +1,3 @@
-#![feature(maybe_uninit_array_assume_init)]
-#![feature(result_flattening)]
 #![feature(let_chains)]
 
 use core::ffi::c_void;

@@ -1,5 +1,3 @@
-#![feature(let_chains)]
-
 use core::ffi::c_void;
 use core::str::FromStr;
 use std::io::{stderr, stdout};
@@ -456,6 +454,7 @@ unsafe fn posts_loop(
     mut away_pitcher_id: i64,
 ) -> Result<()> {
     let game_id = response["gamePk"].as_i64().context("Could not get game id")?;
+    let game_type = response["gameData"]["game"]["type"].as_str().context("Could not get game type")?;
     let id_to_object = response["gameData"]["players"]
         .as_object()
         .context("Could not find home players list")?
@@ -687,7 +686,7 @@ unsafe fn posts_loop(
                 }
             };
 
-            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, num_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), standings, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
+            Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, num_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), (game_type != "P").then_some(standings), if game_type == "P" { "Series Against" } else { "Record Against" }, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
 
             while !cancelled.load(Ordering::Relaxed) { core::hint::spin_loop() }
             return Ok(())

@@ -45,7 +45,7 @@ pub struct Coordinate {
 }
 
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     pub fn SetConsoleCursorInfo(handle: *mut c_void, param: *const ConsoleCursorInfo) -> bool;
 
     pub fn SetConsoleCursorPosition(handle: *mut c_void, pos: Coordinate) -> bool;
@@ -63,11 +63,11 @@ extern "system" {
 }
 
 #[link(name = "msvcrt")]
-extern "system" {
+unsafe extern "system" {
     pub fn _getch() -> u32;
 }
 
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     pub fn SetForegroundWindow(hwnd: *mut c_void) -> bool;
 }

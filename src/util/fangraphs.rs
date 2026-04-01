@@ -38,12 +38,12 @@ impl WobaConstants {
     pub fn calculate_wRCp(self, bb: usize, hbp: usize, singles: usize, doubles: usize, triples: usize, home_runs: usize, stolen_bases: usize, caught_stealings: usize, pa: usize, ibb: usize, team: &str) -> i64 {
         let Self { lgwOBA, wOBAScale, lgRPA, .. } = self;
         let wOBA = self.calculate_wOBA(bb, hbp, singles, doubles, triples, home_runs, stolen_bases, caught_stealings, pa - ibb);
-        (100.0 * (((wOBA - lgwOBA) / wOBAScale + lgRPA * (2.0 - BALLPARK_ADJUSTMENTS.get(team).expect("Expected team to have adjustments"))) / lgRPA)).round() as i64
+        (100.0 * (((wOBA - lgwOBA) / wOBAScale + lgRPA * (2.0 - BALLPARK_ADJUSTMENTS.get(team).unwrap_or(&1.0))) / lgRPA)).round() as i64
     }
 }
 
 fn get_woba_constants() -> WobaConstants {
-    let raw_owned = ureq::get("https://www.fangraphs.com/guts.aspx?type=cn").call().expect("Got wOBA constants successfully").into_string().expect("Response was a valid string");
+    /*let raw_owned = ureq::get("https://www.fangraphs.com/tools/guts").call().expect("Got wOBA constants successfully").into_string().expect("Response was a valid string");
     let mut current_year = Local::now().year();
     let start = 'a: {
         while current_year > 0 {
@@ -70,18 +70,33 @@ fn get_woba_constants() -> WobaConstants {
         runSB: map["runSB"],
         runCS: map["runCS"],
         lgRPA: map["R/PA"],
-    }
+    }*/
+	
+	WobaConstants {
+		lgwOBA: 0.314,
+		wOBAScale: 1.229,
+        wBB: 0.693,
+        wHBP: 0.724,
+        w1B: 0.883,
+        w2B: 1.252,
+        w3B: 1.584,
+        wHR: 2.034,
+        runSB: 0.200,
+        runCS: -0.412,
+        lgRPA: 0.119,
+	}
 }
 
 fn get_ballpark_adjustments() -> FxHashMap<String, f64> {
-    let raw_owned = ureq::get("https://www.fangraphs.com/guts.aspx?type=pf&season=2023&teamid=0&sort=2,d").call().expect("Got ballpark factors successfully").into_string().expect("Response was a valid string");
+    /*let raw_owned = ureq::get("https://www.fangraphs.com/guts.aspx?type=pf&season=2023&teamid=0&sort=2,d").call().expect("Got ballpark factors successfully").into_string().expect("Response was a valid string");
     let (_, raw) = raw_owned.split_once(r#"</thead><tbody>"#).expect("Incorrect specification");
     let (raw, _) = raw.split_once(r#"</tbody>"#).expect("Incorrect specification");
     parse_whole_table(raw).into_iter().map(|map| {
         let team_name = map["Team"].as_ref().unwrap_err().to_owned();
         let &adjustment = map["1yr"].as_ref().unwrap();
         (team_name, adjustment)
-    }).collect()
+    }).collect()*/
+	FxHashMap::default()
 }
 
 fn parse_whole_table(raw: &str) -> Vec<FxHashMap<String, Result<f64, String>>> {

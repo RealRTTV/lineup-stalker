@@ -9,7 +9,8 @@ use crate::util::statsapi::Score;
 #[derive(Clone)]
 pub struct FinalCard {
     score: Score,
-    standings: Standings,
+    standings: Option<Standings>,
+    record_text: &'static str,
     record: RecordAgainst,
     next_game: Option<NextGame>,
     masterpieces: String,
@@ -19,10 +20,11 @@ pub struct FinalCard {
 }
 
 impl FinalCard {
-    pub fn new(score: Score, standings: Standings, record: RecordAgainst, next_game: Option<NextGame>, masterpieces: String, line_score: LineScore, scoring_plays: Vec<String>, decisions: Option<Decisions>) -> Self {
+    pub fn new(score: Score, standings: Option<Standings>, record_text: &'static str, record: RecordAgainst, next_game: Option<NextGame>, masterpieces: String, line_score: LineScore, scoring_plays: Vec<String>, decisions: Option<Decisions>) -> Self {
         Self {
             score,
             standings,
+            record_text,
             record,
             next_game,
             masterpieces,
@@ -35,11 +37,13 @@ impl FinalCard {
 
 impl Display for FinalCard {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { score, standings, record, next_game, masterpieces, line_score, scoring_plays, decisions } = self;
+        let Self { score, standings, record_text, record, next_game, masterpieces, line_score, scoring_plays, decisions } = self;
         writeln!(f, "## Final Score")?;
         writeln!(f, "{score:?}")?;
-        writeln!(f, "Standings: {standings}")?;
-        writeln!(f, "Record Against: {record}")?;
+        if let Some(standings) = standings {
+            writeln!(f, "Standings: {standings}")?;
+        }
+        writeln!(f, "{record_text}: {record}")?;
         if let Some(next_game) = next_game {
             writeln!(f, "Next Game: {next_game}")?;
         }

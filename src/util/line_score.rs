@@ -11,7 +11,7 @@ pub struct LineScore {
 }
 
 impl LineScore {
-    pub fn new(innings: &[Value], away: &TeamStatsLog, home: &TeamStatsLog, top: bool) -> Result<Self> {
+    pub fn new(innings: &[Value], home: &TeamStatsLog, away: &TeamStatsLog, top: bool) -> Result<Self> {
         let mut header = "**`    ".to_owned();
         let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = away.abbreviation);
         let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = home.abbreviation);

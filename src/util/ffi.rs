@@ -71,3 +71,24 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn SetForegroundWindow(hwnd: *mut c_void) -> bool;
 }
+
+pub fn flush() {
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+}
+
+#[must_use]
+pub fn read_char() -> u32 {
+    unsafe { _getch() }
+}
+
+pub fn set_cursor(x: usize, y: usize) {
+    unsafe { SetConsoleCursorPosition(GetStdHandle(-11_i32 as u32), Coordinate { x: x as i16, y: y as i16 }); }
+}
+
+pub fn set_cursor_visible(visible: bool) {
+    unsafe { SetConsoleCursorInfo(GetStdHandle(-11_i32 as u32), &ConsoleCursorInfo::new(1, visible)); }
+}
+
+pub fn set_text_attribute(attributes: u16) {
+    unsafe { SetConsoleTextAttribute(GetStdHandle(-11_i32 as u32), attributes); }
+}

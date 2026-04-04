@@ -1,75 +1,61 @@
 use std::fmt::{Debug, Display, Formatter};
 use anyhow::{Result, Context};
-use serde_json::Value;
+use mlb_api::game::{Inning, InningHalf, Play};
+use mlb_api::meta::EventType;
 use crate::util::nth;
 use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
 
 #[derive(Clone)]
 pub struct ScoringPlay {
-    inning: u8,
-    top: bool,
+    inning: Inning,
+    half: InningHalf,
     outs: u8,
     score: Score,
-    rbi: i64,
+    rbi: usize,
     scores: Vec<ScoredRunner>,
-    raw_event: String,
+    event: EventType,
 }
 
 impl ScoringPlay {
     pub fn from_play(
-        play: &Value,
+        play: &Play,
         home_abbreviation: &str,
         away_abbreviation: &str,
-        all_player_names: &[String],
+        all_player_names: &[&str],
     ) -> Result<Self> {
-        let inning = play["about"]["inning"]
-            .as_i64()
-            .context("Could not find inning (scoring play)")? as u8;
-        let top = play["about"]["isTopInning"]
-            .as_bool()
-            .context("Could not find inning half")?;
-        let home_score = play["result"]["homeScore"].as_i64().context("Could not find away team's score")? as usize;
-        let away_score = play["result"]["awayScore"].as_i64().context("Could not find away team's score")? as usize;
-        let walkoff = !top && inning >= 9 && home_score > away_score;
+        let is_walkoff = play.about.inning_half == InningHalf::Bottom && *play.about.inning >= 9 && play.result.home_score > play.result.away_score;
+        let details = play.result.completed_play_details.as_ref().context("Expected play to be complete")?;
 
         Ok(Self {
-            inning,
-            top,
-            outs: play["count"]["outs"]
-                .as_i64()
-                .context("Could not find outs")? as u8,
-            score: Score::new(away_abbreviation.to_owned(), away_score, home_abbreviation.to_owned(), home_score, 0, !top, BoldingDisplayKind::MostRecentlyScored, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
-            rbi: play["result"]["rbi"]
-                .as_i64()
-                .context("Could not find the RBI of the play")?,
-            scores: ScoredRunner::from_description(play["result"]["description"].as_str().context("Could not get play description")?, all_player_names),
-            raw_event: play["result"]["eventType"]
-                .as_str()
-                .context("Could not find event type")?
-                .to_owned(),
+            inning: play.about.inning,
+            half: play.about.inning_half,
+            outs: play.count.outs,
+            score: Score::new(away_abbreviation.to_owned(), play.result.away_score, home_abbreviation.to_owned(), play.result.home_score, 0, play.about.inning_half.bats(), BoldingDisplayKind::MostRecentlyScored, if is_walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
+            rbi: details.rbi,
+            scores: ScoredRunner::from_description(&details.description, all_player_names),
+            event: details.event
         })
     }
 
-    pub fn one_liner(&self) -> String {
+    pub fn as_one_liner(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
 
-        let mut buf = String::new();
         let Self { score, .. } = self;
-        let half = if self.top { "Top" } else { "Bot" };
-        let inning = nth(self.inning as usize);
-        write!(&mut buf, "{score} | {half} **{inning}**:", score = score.format_code_block()).unwrap_or(());
+        let half = self.half.three_char();
+        let inning = nth(*self.inning);
+        write!(f, "{score} | {half} **{inning}**:", score = score.format_code_block())?;
         for score in &self.scores {
-            write!(&mut buf, " {score}").unwrap_or(());
+            write!(f, " {score}")?;
         }
-        buf
+        Ok(())
     }
 }
 
 impl Display for ScoringPlay {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let Self { score, .. } = self;
-        let half = if self.top { "Top" } else { "Bot" };
-        let inning = nth(self.inning as usize);
+        let half = self.half.three_char();
+        let inning = nth(*self.inning);
         write!(f, "`{score}` | {half} **{inning}**:")?;
         for score in &self.scores {
             write!(f, " {score}")?;
@@ -80,97 +66,55 @@ impl Display for ScoringPlay {
 
 impl Debug for ScoringPlay {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let event = match &*self.raw_event {
-            "single" => {
+        write!(f, "{score:?} (", score = self.score)?;
+        match self.event {
+            EventType::HomeRun => if self.scores.iter().any(|score| score.play().contains("inside-the-park")) {
+                if self.scores.len() == 1 {
+                    write!(f, "HR")?
+                } else {
+                    write!(f, "{}HR", self.scores.len())?
+                }
+            } else {
+                if self.scores.len() == 1 {
+                    write!(f, "**HR**")?
+                } else {
+                    write!(f, "**{}HR**", self.scores.len())?
+                }
+            },
+            EventType::FieldOut => {
                 if self.rbi == 1 {
-                    "RBI single".to_owned()
+                    write!(f, "RBI groundout")?
                 } else {
-                    format!("{n}RBI single", n = self.rbi)
+                    write!(f, "{n}RBI groundout", n = self.rbi)?
                 }
             }
-            "double" => {
+            EventType::ForceOut => {
                 if self.rbi == 1 {
-                    "RBI double".to_owned()
+                    write!(f, "RBI forceout")?
                 } else {
-                    format!("{n}RBI double", n = self.rbi)
+                    write!(f, "{n}RBI forceout", n = self.rbi)?
                 }
             }
-            "triple" => {
+            EventType::FieldersChoiceFieldOut => {
                 if self.rbi == 1 {
-                    "RBI triple".to_owned()
+                    write!(f, "RBI Fielder's choice")?
                 } else {
-                    format!("{n}RBI triple", n = self.rbi)
+                    write!(f, "{n}RBI Fielder's choice", n = self.rbi)?
                 }
             }
-            "home_run" => {
-                if self.scores.iter().any(|score| score.play().contains("inside-the-park")) {
-                    if self.scores.len() == 1 {
-                        "HR".to_owned()
-                    } else {
-                        format!("{}HR", self.scores.len())
-                    }
-                } else {
-                    if self.scores.len() == 1 {
-                        "**HR**".to_owned()
-                    } else {
-                        format!("**{}HR**", self.scores.len())
-                    }
-                }
-            }
-            "grounded_into_double_play" => {
+            EventType::FieldError => write!(f, "Error")?,
+            EventType::IntentionalWalk => write!(f, "Bases loaded intentional walk")?,
+            EventType::Walk => write!(f, "Bases loaded walk")?,
+            EventType::HitByPitch => write!(f, "Bases loaded HBP")?,
+            event => {
                 if self.rbi == 1 {
-                    "RBI double play".to_owned()
+                    write!(f, "RBI {event}", event = event.to_string().to_ascii_lowercase())?
                 } else {
-                    format!("{n}RBI double play", n = self.rbi)
+                    write!(f, "{n}RBI {event}", n = self.rbi, event = event.to_string().to_ascii_lowercase())?
                 }
-            }
-            "fielders_choice" => {
-                "Fielder's Choice".to_owned()
-            }
-            "field_out" => {
-                if self.rbi == 1 {
-                    "RBI groundout".to_owned()
-                } else {
-                    format!("{n}RBI groundout", n = self.rbi)
-                }
-            }
-            "force_out" => {
-                if self.rbi == 1 {
-                    "RBI forceout".to_owned()
-                } else {
-                    format!("{n}RBI forceout", n = self.rbi)
-                }
-            }
-            "sac_fly" => {
-                if self.rbi == 1 {
-                    "RBI sacrifice fly".to_owned()
-                } else {
-                    format!("{n}RBI sacrifice fly", n = self.rbi)
-                }
-            }
-            "sac_bunt" => {
-                if self.rbi == 1 {
-                    "RBI sacrifice bunt".to_owned()
-                } else {
-                    format!("{n}RBI sacrifice bunt", n = self.rbi)
-                }
-            }
-            "fielders_choice_out" => {
-                if self.rbi == 1 {
-                    "RBI Fielder's choice".to_owned()
-                } else {
-                    format!("{n}RBI Fielder's choice", n = self.rbi)
-                }
-            }
-            "field_error" => "Error".to_owned(),
-            "intent_walk" => "Bases loaded intentional walk".to_owned(),
-            "balk" => "Balk".to_owned(),
-            "walk" => "Bases loaded walk".to_owned(),
-            "hit_by_pitch" => "Bases loaded HBP".to_owned(),
-            event => format!("{n}RBI {event}", n = self.rbi),
-        };
-
-        writeln!(f, "{score:?} ({event})", score = self.score)?;
+            },
+        }
+        writeln!(f, ")")?;
         writeln!(
             f,
             "{half} **{inning}**, **{outs}** out{out_suffix}.",

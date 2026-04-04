@@ -21,7 +21,7 @@ impl NextGame {
         let home_id = game["teams"]["home"]["team"]["id"].as_i64().context("Could not get home Team ID")?;
         let away_id = game["teams"]["away"]["team"]["id"].as_i64().context("Could not get away Team ID")?;
         let home = home_id == our_id;
-        let opponent_team = get(&format!("https://statsapi.mlb.com/api/v1/teams/{}", if home { away_id } else { home_id }))?;
+        let opponent_team: Value = get(&format!("https://statsapi.mlb.com/api/v1/teams/{}", if home { away_id } else { home_id }))?;
         let location_name = opponent_team["teams"][0]["franchiseName"].as_str().context("Could not get team franchise name")?.to_string();
         let full_name = opponent_team["teams"][0]["name"].as_str().context("Could not get team full name")?.to_string();
         Ok(Self {

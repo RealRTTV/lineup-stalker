@@ -1,10 +1,10 @@
 use std::fmt::Display;
 use chrono::DateTime;
 use chrono_tz::Tz;
-use crate::util::hitting::HitterLineupEntry;
-use crate::util::pitching::PitcherLineupEntry;
-use crate::util::record_against::RecordAgainst;
-use crate::util::standings::Standings;
+use crate::posts::components::hitting::HitterLineupEntry;
+use crate::posts::components::pitching::PitcherLineupEntry;
+use crate::posts::components::record_against::RecordAgainst;
+use crate::posts::components::standings::Standings;
 use crate::util::stat::HittingStat;
 use crate::util::statsapi::Score;
 
@@ -18,8 +18,7 @@ pub struct Lineup {
     pub standings: Standings,
     home_pitcher_stats: PitcherLineupEntry,
     away_pitcher_stats: PitcherLineupEntry,
-    first_stat: HittingStat,
-    second_stat: HittingStat,
+    hitting_stats: [HittingStat; 2],
     lineup: [HitterLineupEntry; 9],
 }
 
@@ -33,8 +32,7 @@ impl Lineup {
         standings: Standings,
         home_pitcher_stats: PitcherLineupEntry,
         away_pitcher_stats: PitcherLineupEntry,
-        first_stat: HittingStat,
-        second_stat: HittingStat,
+        hitting_stats: [HittingStat; 2],
         lineup: [HitterLineupEntry; 9],
     ) -> Self {
         Self {
@@ -46,8 +44,7 @@ impl Lineup {
             standings,
             home_pitcher_stats,
             away_pitcher_stats,
-            first_stat,
-            second_stat,
+            hitting_stats,
             lineup,
         }
     }
@@ -59,7 +56,7 @@ impl Lineup {
 
 impl Display for Lineup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { datetime, title, time, previous, record, standings, home_pitcher_stats, away_pitcher_stats, first_stat, second_stat, lineup } = self;
+        let Self { datetime, title, time, previous, record, standings, home_pitcher_stats, away_pitcher_stats, hitting_stats: [first_stat, second_stat], lineup } = self;
 
         writeln!(f, "# {} {title}", datetime.format("%m*|*%d*|*%y"))?;
         writeln!(f, "First Pitch: {time}")?;

@@ -1,7 +1,17 @@
 use core::fmt::{Debug, Display, Formatter};
 use std::cmp::Ordering;
 use anyhow::{Result, Context, anyhow};
+use mlb_api::game::{BattingOrderIndex, TeamWithGameData};
+use mlb_api::meta::GameType;
+use mlb_api::season::SeasonId;
+use mlb_api::{single_stat, HomeAway, TeamSide};
+use mlb_api::team::{Team, TeamName};
+use pollster::FutureExt;
 use serde_json::Value;
+use crate::posts::components::hitting::HitterLineupEntry;
+use crate::posts::components::team_stats_log::TeamStatsLog;
+use crate::responses::{live_feed, BattingOrderIndex};
+use crate::responses::live_feed::BoxscoreTeam;
 use crate::util::hide;
 use crate::util::hitting::HitterLineupEntry;
 use crate::util::stat::HittingStat;
@@ -25,7 +35,7 @@ impl ScoredRunner {
         &self.play
     }
     
-    pub fn from_description(description: &str, all_player_names: &[String]) -> Vec<Self> {
+    pub fn from_description(description: &str, all_player_names: &[&str]) -> Vec<Self> {
         let scores = description
             .split_once(": ")
             .map_or(description, |(_, x)| x);
@@ -50,7 +60,7 @@ impl ScoredRunner {
         while let Some(value) = iter.next() {
             // names with a . in them (ex: Vladimir Guerrero Jr.) are broken in the formatter, so it has to be patched
             let value = if all_player_names.iter().any(|name| value == *name) && let Some(next) = iter.next() {
-                remap_score_event(&format!("{value} {next}"), all_player_names, )
+                remap_score_event(&format!("{value} {next}"), all_player_names)
             } else {
                 remap_score_event(&value, all_player_names)
             };
@@ -87,7 +97,7 @@ pub enum BoldingDisplayKind {
 }
 
 impl BoldingDisplayKind {
-    pub fn bolding(self, away_runs: usize, home_runs: usize, home_team_scored_most_recently: bool) -> (&'static str, &'static str) {
+    pub fn bolding(self, away_runs: usize, home_runs: usize, who_scored: TeamSide) -> (&'static str, &'static str) {
         const BOLD: &'static str = "**";
         const NONE: &'static str = "";
 
@@ -99,7 +109,7 @@ impl BoldingDisplayKind {
                 Ordering::Equal => (NONE, NONE),
                 Ordering::Greater => (BOLD, NONE),
             }
-            Self::MostRecentlyScored => if home_team_scored_most_recently { (NONE, BOLD) } else { (BOLD, NONE) },
+            Self::MostRecentlyScored => HomeAway::new((NONE, BOLD), (BOLD, NONE)).choose(who_scored),
         }
     }
 }
@@ -111,7 +121,7 @@ pub struct Score {
     home_abbreviation: String,
     pub home_runs: usize,
     innings: u8,
-    pub home_team_scored_most_recently: bool,
+    pub who_scored: TeamSide,
     runs_bolding: BoldingDisplayKind,
     team_bolding: BoldingDisplayKind,
 }
@@ -122,7 +132,7 @@ impl Score {
                home_abbreviation: String,
                home_runs: usize,
                innings: u8,
-               home_team_scored_most_recently: bool,
+               who_scored: TeamSide,
                runs_bolding: BoldingDisplayKind, 
                team_bolding: BoldingDisplayKind) -> Self {
         Self {
@@ -131,28 +141,24 @@ impl Score {
             home_abbreviation,
             home_runs,
             innings,
-            home_team_scored_most_recently,
+            who_scored,
             runs_bolding,
             team_bolding,
         }
     }
 
-    pub fn from_stats_log(home: &TeamStatsLog, away: &TeamStatsLog, innings: u8, home_team_scored_most_recently: bool, runs_bolding: BoldingDisplayKind, team_bolding: BoldingDisplayKind) -> Self {
-        Self::new(away.abbreviation.clone(), away.runs, home.abbreviation.clone(), home.runs, innings, home_team_scored_most_recently, runs_bolding, team_bolding)
-    }
-
     pub fn format_code_block(&self) -> String {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, home_team_scored_most_recently, .. } = self;
-        let (home_bold, away_bold) = if *home_team_scored_most_recently { ("**", "") } else { ("", "**") };
+        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, who_scored, .. } = self;
+        let (home_bold, away_bold) = HomeAway::new(("**", ""), ("", "**")).choose(self.who_scored);
         format!("{away_bold}`{away_abbreviation} {away_runs}`{away_bold} - {home_bold}`{home_abbreviation} {home_runs}`{home_bold}")
     }
 }
 
 impl Debug for Score {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, home_team_scored_most_recently, runs_bolding, team_bolding } = self;
-        let (away_abbreviation_bold, home_abbreviation_bold) = team_bolding.bolding(*away_runs, *home_runs, *home_team_scored_most_recently);
-        let (away_score_bold, home_score_bold) = runs_bolding.bolding(*away_runs, *home_runs, *home_team_scored_most_recently);
+        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, who_scored, runs_bolding, team_bolding } = self;
+        let (away_abbreviation_bold, home_abbreviation_bold) = team_bolding.bolding(*away_runs, *home_runs, *who_scored);
+        let (away_score_bold, home_score_bold) = runs_bolding.bolding(*away_runs, *home_runs, *who_scored);
         let extra_innings_suffix = if *innings > 9 { format!(" ({innings})") } else { String::new() };
         write!(f, "{away_abbreviation_bold}{away_abbreviation}{away_abbreviation_bold} {away_score_bold}{away_runs}{away_score_bold}-{home_score_bold}{home_runs}{home_score_bold} {home_abbreviation_bold}{home_abbreviation}{home_abbreviation_bold}{extra_innings_suffix}")
     }
@@ -165,76 +171,23 @@ impl Display for Score {
     }
 }
 
-pub fn pitching_stats(value: Value) -> Result<(f64, f64, char)> {
-    let hand = value["people"][0]["pitchHand"]["code"].as_str().context("Could not get pitcher's hand")?.to_owned().chars().next().unwrap_or('R');
-    let mut total_earned_runs = 0;
-    let mut total_outs = 0;
-    let Some(arr) = value["people"][0]["stats"][0]["splits"].as_array() else { return Ok((0.0, 0.0, hand)) };
-    for split in arr.iter().rev() {
-        total_earned_runs += split["stat"]["earnedRuns"].as_i64().context("Pitcher doesn't have earnedRuns")?;
-        total_outs += split["stat"]["outs"].as_i64().context("Could not get pitchers outs")?;
+// todo: use more
+pub fn modify_abbreviation(name: &TeamName) -> String {
+    if name.abbreviation.len() == 3 {
+        return name.abbreviation.clone();
     }
-    Ok(if total_outs == 0 {
-        (0.0, 0.0, hand)
-    } else {
-        (
-            (total_earned_runs * 9 * 3) as f64 / total_outs as f64,
-            (total_outs / 3) as f64 + (total_outs % 3) as f64 / 10.0,
-            hand,
-        )
-    })
-}
-
-pub fn to_position_abbreviation(s: &str) -> Result<String> {
-    let s = s.to_ascii_lowercase();
-    Ok(match &*s {
-        "pitcher" => "P",
-        "catcher" => "C",
-        "first baseman" | "first base" => "1B",
-        "second baseman" | "second base" => "2B",
-        "third baseman" | "third base" => "3B",
-        "shortstop" => "SS",
-        "left fielder" | "left field" => "LF",
-        "center fielder" | "center field" => "CF",
-        "right fielder" | "right field" => "RF",
-        _ => return Err(anyhow!("Invalid fielding position '{s}'")),
-    }.to_owned())
-}
-
-pub fn modify_abbreviation(parent: &Value) -> Result<String> {
-    let original = parent["abbreviation"]
-        .as_str()
-        .context("Team didn't have an abbreviated name")?;
-    if original.len() == 3 {
-        return Ok(original.to_owned());
-    }
-    let location = parent["franchiseName"]
-        .as_str()
-        .context("Team didn't have a location name")?;
-    let team_name = parent["clubName"]
-        .as_str()
-        .context("Team didn't have a team name")?;
-    let acronym = location
+    let acronym = name.franchise_name
         .split(' ')
-        .chain(team_name.split(' '))
+        .chain(name.club_name.split(' '))
         .filter_map(|s| s.chars().nth(0))
         .collect::<String>();
     if acronym.len() == 3 {
-        return Ok(acronym);
+        return acronym;
     }
-    let file_code = parent["teamCode"]
-        .as_str()
-        .context("Team didn't have a file code")?;
-    if file_code.len() == 3 {
-        return Ok(file_code.to_ascii_uppercase());
+    if name.team_code.len() == 3 {
+        return name.team_code.to_ascii_uppercase();
     }
-    let team_code = parent["teamCode"]
-        .as_str()
-        .context("Team didn't have a team code")?;
-    if team_code.len() == 3 {
-        return Ok(team_code.to_ascii_uppercase());
-    }
-    Ok(acronym)
+    acronym
 }
 
 pub fn get_last_lineup_underscores(previous_lineup: &Value) -> Result<[HitterLineupEntry; 9]> {
@@ -250,34 +203,28 @@ pub fn get_last_lineup_underscores(previous_lineup: &Value) -> Result<[HitterLin
     Ok([a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), f.clone(), g.clone(), h.clone(), i.clone()])
 }
 
-pub fn lineup(root: &Value, first_stat: HittingStat, second_stat: HittingStat, show_stats: bool, team_name: &str) -> Result<[HitterLineupEntry; 9]> {
+pub fn lineup(team: &TeamWithGameData, stats: [HittingStat; 2], show_stats: bool, season: SeasonId) -> Result<[HitterLineupEntry; 9]> {
     let mut players: [Option<HitterLineupEntry>; 9] = [const { None }; 9];
-    for (_, player) in root["players"]
-        .as_object()
-        .context("Hitters didn't exist")?
-    {
-        let person = player["person"]
-            .as_object()
-            .context("Hitter's 'person' didn't exist")?;
-        let name = person["fullName"]
-            .as_str()
-            .context("Hitter's name didn't exist")?;
-        let Some(batting_order) = player["battingOrder"]
-            .as_str()
-            .and_then(|x| x.parse::<i64>().ok())
-            else {
-                continue;
-            };
-        if batting_order % 100 != 0 { continue; }
-        let position = player["position"]["abbreviation"].as_str().context("Hitter's first position didn't exist")?;
-        let first_stat = first_stat.get(&player["seasonStats"]["batting"], team_name)?;
-        let second_stat = second_stat.get(&player["seasonStats"]["batting"], team_name)?;
-        players[batting_order as usize / 100 - 1] = Some(HitterLineupEntry::new(name.to_owned(), position.to_owned(), (batting_order / 100) as u8, if show_stats { Some((first_stat, second_stat)) } else { None }));
+    for (_, player) in team.players.iter() {
+        let person = &player.person;
+        let name = &person.full_name;
+        let Some(batting_order @ BattingOrderIndex { major: _, minor: 0 }) = player.batting_order else { continue };
+        let position = player.position;
+        let sabermetrics_stats = {
+            let id = person.id;
+            async move || single_stat!(Sabermetrics + Hitting for id; with |builder| builder.season(season)).await
+        };
+        let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.stats.hitting, sabermetrics_stats).block_on())?) } else { None };
+        players[batting_order.major - 1] = Some(HitterLineupEntry::new(name.to_owned(), position, batting_order, stats));
     }
-    Ok(players.into_iter().collect::<Option<Vec<HitterLineupEntry>>>().context("Hitter was missing from lineup")?.try_into().ok().context("what the fuck")?)
+    Ok(players.into_iter().collect::<Option<Vec<HitterLineupEntry>>>().context("Hitter was missing from lineup")?.try_into()?)
 }
 
-pub fn remap_score_event(event: &str, all_player_names: &[String]) -> String {
+pub fn should_show_stats(game_type: GameType) -> bool {
+    matches!(game_type, GameType::RegularSeason) || game_type.is_postseason()
+}
+
+pub fn remap_score_event(event: &str, all_player_names: &[&str]) -> String {
     fn remove_prefix<'a>(s: &'a str, prefixes: impl Iterator<Item = &'a str>) -> Option<&'a str> {
         for prefix in prefixes {
             if let Some(s) = s.strip_prefix(prefix) {

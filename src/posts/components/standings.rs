@@ -4,8 +4,8 @@ use core::fmt::Display;
 
 #[derive(Clone)]
 pub struct Standings {
-    wins: i64,
-    losses: i64,
+    wins: u32,
+    losses: u32,
     streak: Option<(bool, NonZeroUsize)>,
 }
 

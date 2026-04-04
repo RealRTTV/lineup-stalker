@@ -1,9 +1,9 @@
 use std::fmt::{Display, Formatter};
-use crate::util::decisions::Decisions;
-use crate::util::line_score::LineScore;
-use crate::util::next_game::NextGame;
-use crate::util::record_against::RecordAgainst;
-use crate::util::standings::Standings;
+use crate::posts::components::decisions::Decisions;
+use crate::posts::components::line_score::LineScore;
+use crate::posts::components::next_game::NextGame;
+use crate::posts::components::record_against::RecordAgainst;
+use crate::posts::components::standings::Standings;
 use crate::util::statsapi::Score;
 
 #[derive(Clone)]

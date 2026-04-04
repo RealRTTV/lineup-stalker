@@ -1,7 +1,8 @@
 use std::fmt::{Display, Formatter, Write};
 use anyhow::{Result, Context};
+use mlb_api::game::{Boxscore, InningHalf, Linescore};
 use serde_json::Value;
-use crate::util::team_stats_log::TeamStatsLog;
+use crate::posts::components::team_stats_log::TeamStatsLog;
 
 #[derive(Clone)]
 pub struct LineScore {
@@ -11,37 +12,35 @@ pub struct LineScore {
 }
 
 impl LineScore {
-    pub fn new(innings: &[Value], home: &TeamStatsLog, away: &TeamStatsLog, top: bool) -> Result<Self> {
+    pub fn new(linescore: &Linescore) -> Self {
         let mut header = "**`    ".to_owned();
         let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = away.abbreviation);
         let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = home.abbreviation);
 
-        for (idx, inning) in innings.iter().enumerate() {
+        for inning in &linescore.innings {
             write!(
                 &mut header,
                 "|{n: ^3}",
-                n = inning["num"]
-                    .as_i64()
-                    .context("Could not find inning number")?
+                n = inning.inning,
             )?;
             write!(
                 &mut away_linescore,
                 "|{n: ^3}",
-                n = inning["away"]["runs"].as_i64().unwrap_or(0)
+                n = inning.inning_record.away.runs,
             )?;
             write!(
                 &mut home_linescore,
                 "|{n: ^3}",
-                n = if idx + 1 == innings.len() && top {
+                n = if inning.inning_record.home.was_inning_half_played {
                     "-".to_owned()
                 } else {
-                    inning["home"]["runs"].as_i64().unwrap_or(0).to_string()
+                    inning.inning_record.home.runs.to_string()
                 }
             )?;
         }
-        let runs_width = u32::max(home.runs.checked_ilog10().map_or(1, |x| x + 1), away.runs.checked_ilog10().map_or(1, |x| x + 1)) as usize;
-        let hits_width = u32::max(home.hits.checked_ilog10().map_or(1, |x| x + 1), away.hits.checked_ilog10().map_or(1, |x| x + 1)) as usize;
-        let errors_width = u32::max(home.errors.checked_ilog10().map_or(1, |x| x + 1), away.errors.checked_ilog10().map_or(1, |x| x + 1)) as usize;
+        let runs_width = u32::max(linescore.rhe_totals.home.runs.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.runs.checked_ilog10().map_or(1, |x| x + 1)) as usize;
+        let hits_width = u32::max(linescore.rhe_totals.home.hits.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.hits.checked_ilog10().map_or(1, |x| x + 1)) as usize;
+        let errors_width = u32::max(linescore.rhe_totals.home.errors.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.errors.checked_ilog10().map_or(1, |x| x + 1)) as usize;
         write!(
             &mut header,
             "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`**",
@@ -52,16 +51,16 @@ impl LineScore {
         write!(
             &mut away_linescore,
             "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`",
-            r = away.runs,
-            h = away.hits,
-            e = away.errors
+            r = linescore.rhe_totals.away.runs,
+            h = linescore.rhe_totals.away.hits,
+            e = linescore.rhe_totals.away.errors
         )?;
         write!(
             &mut home_linescore,
             "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`",
-            r = home.runs,
-            h = home.hits,
-            e = home.errors
+            r = linescore.rhe_totals.home.runs,
+            h = linescore.rhe_totals.home.hits,
+            e = linescore.rhe_totals.home.errors
         )?;
         Ok(Self {
             header,

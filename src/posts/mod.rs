@@ -5,29 +5,27 @@ use crate::posts::defensive_switch::DefensiveSwitch;
 use crate::posts::final_card::FinalCard;
 use crate::posts::lineup::Lineup;
 use crate::posts::offensive_substitution::OffensiveSubstitution;
-use crate::posts::pitching_substitution::PitchingSubstitution;
+use crate::posts::pitching_line::PitcherFinalLine;
 use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
 use crate::util::ffi::{GetConsoleWindow, SetForegroundWindow};
 
-pub mod pitching_substitution;
+pub mod pitching_line;
 pub mod scoring_play;
-pub mod offensive_substitution;
-pub mod defensive_substitution;
 pub mod scoring_play_event;
-pub mod defensive_switch;
 pub mod lineup;
 pub mod final_card;
+pub mod components;
 
 #[derive(Clone)]
 pub enum Post {
     Lineup(Lineup),
     ScoringPlay(ScoringPlay),
-    PitchingSubstitution(PitchingSubstitution),
+    PitchingSubstitution(PitcherFinalLine),
     OffensiveSubstitution(OffensiveSubstitution),
     DefensiveSubstitution(DefensiveSubstitution),
     DefensiveSwitch(DefensiveSwitch),
-    PassedBall(ScoringPlayEvent),
+    WildPitch(ScoringPlayEvent),
     StolenHome(ScoringPlayEvent),
     FinalCard(FinalCard),
 }
@@ -67,7 +65,7 @@ impl Display for Post {
             Self::OffensiveSubstitution(inner) => write!(f, "{inner:?}"),
             Self::DefensiveSubstitution(inner) => write!(f, "{inner:?}"),
             Self::DefensiveSwitch(inner) => write!(f, "{inner:?}"),
-            Self::PassedBall(inner) => write!(f, "{inner:?}"),
+            Self::WildPitch(inner) => write!(f, "{inner:?}"),
             Self::StolenHome(inner) => write!(f, "{inner:?}"),
             Self::FinalCard(inner) => write!(f, "{inner}"),
         }

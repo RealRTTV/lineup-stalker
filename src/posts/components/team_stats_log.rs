@@ -1,10 +1,4 @@
 pub struct TeamStatsLog {
-    pub walks: usize,
-    pub hits: usize,
-    pub errors: usize,
-    pub runs: usize,
-    pub strikeouts: usize,
-    pub pitches_thrown: usize,
     pub pitchers: Vec<String>,
     pub abbreviation: String,
 }
@@ -25,30 +19,6 @@ impl TeamStatsLog {
 
     pub fn walk(&mut self) {
         self.walks += 1;
-    }
-
-    pub fn strikeout(&mut self) {
-        self.strikeouts += 1;
-    }
-
-    pub fn pitch_thrown(&mut self) {
-        self.pitches_thrown += 1;
-    }
-
-    pub fn change_pitcher(&mut self, reliever: String) {
-        self.pitchers.push(reliever);
-    }
-
-    pub fn add_runs(&mut self, runs: usize) {
-        self.runs += runs;
-    }
-
-    pub fn add_hits(&mut self, hits: usize) {
-        self.hits += hits;
-    }
-
-    pub fn add_errors(&mut self, errors: usize) {
-        self.errors += errors;
     }
 
     pub fn opponent_game_score(&self, innings: usize) -> i32 {

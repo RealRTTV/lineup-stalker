@@ -2,7 +2,7 @@ use core::fmt::Display;
 use core::fmt::Formatter;
 use core::num::NonZeroUsize;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Standings {
     wins: u32,
     losses: u32,
@@ -11,11 +11,7 @@ pub struct Standings {
 
 impl Standings {
     pub fn new() -> Self {
-        Self {
-            wins: 0,
-            losses: 0,
-            streak: None,
-        }
+        Self::default()
     }
 
     pub fn streak_older_win(&mut self) -> bool {

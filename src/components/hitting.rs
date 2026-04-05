@@ -24,8 +24,8 @@ impl HitterLineupEntry {
 impl Display for HitterLineupEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let Self { batting_order, position, name, stats } = self;
-        let position = position.map_or("__", |pos| pos.abbreviation.as_str());
-        let stats = stats.map(|stats| format!(" [{}]", stats.join(" *|* "))).unwrap_or_default();
+        let position = position.as_ref().map_or("__", |pos| pos.abbreviation.as_str());
+        let stats = stats.as_ref().map(|stats| format!(" [{}]", stats.join(" *|* "))).unwrap_or_default();
         write!(f, r"`{batting_order}` | **{position}** {name}{stats}")
     }
 }

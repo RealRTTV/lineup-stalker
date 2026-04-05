@@ -66,9 +66,16 @@ impl ScoredRunner {
         }
         vec
     }
+    
+    pub fn as_one_liner(&self) -> OneLiner<'_> {
+        OneLiner(self)
+    }
 }
 
-impl Debug for ScoredRunner {
+#[must_use]
+pub struct OneLiner<'a>(&'a ScoredRunner);
+
+impl Display for ScoredRunner {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.scoring {
             write!(f, "> **{}**", self.play)
@@ -78,9 +85,9 @@ impl Debug for ScoredRunner {
     }
 }
 
-impl Display for ScoredRunner {
+impl Display for OneLiner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.play)
+        write!(f, "{}", self.0.play)
     }
 }
 
@@ -94,8 +101,8 @@ pub enum BoldingDisplayKind {
 
 impl BoldingDisplayKind {
     pub fn bolding(self, away_runs: usize, home_runs: usize, who_scored: TeamSide) -> (&'static str, &'static str) {
-        const BOLD: &'static str = "**";
-        const NONE: &'static str = "";
+        const BOLD: &str = "**";
+        const NONE: &str = "";
 
         match self {
             Self::None => (NONE, NONE),
@@ -143,8 +150,22 @@ impl Score {
         }
     }
 
-    pub fn code_block(&self) -> CodeBlock {
+    pub fn as_code_block(&self) -> CodeBlock<'_> {
         CodeBlock(self)
+    }
+    
+    pub fn one_liner(&self) -> OneLinerScore<'_> {
+        OneLinerScore(self)
+    }
+}
+
+impl Display for Score {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, who_scored, runs_bolding, team_bolding } = self;
+        let (away_abbreviation_bold, home_abbreviation_bold) = team_bolding.bolding(*away_runs, *home_runs, *who_scored);
+        let (away_score_bold, home_score_bold) = runs_bolding.bolding(*away_runs, *home_runs, *who_scored);
+        let extra_innings_suffix = if *innings > 9 { format!(" ({innings})") } else { String::new() };
+        write!(f, "{away_abbreviation_bold}{away_abbreviation}{away_abbreviation_bold} {away_score_bold}{away_runs}{away_score_bold}-{home_score_bold}{home_runs}{home_score_bold} {home_abbreviation_bold}{home_abbreviation}{home_abbreviation_bold}{extra_innings_suffix}")
     }
 }
 
@@ -159,32 +180,25 @@ impl Display for CodeBlock<'_> {
     }
 }
 
-impl Debug for Score {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, innings, who_scored, runs_bolding, team_bolding } = self;
-        let (away_abbreviation_bold, home_abbreviation_bold) = team_bolding.bolding(*away_runs, *home_runs, *who_scored);
-        let (away_score_bold, home_score_bold) = runs_bolding.bolding(*away_runs, *home_runs, *who_scored);
-        let extra_innings_suffix = if *innings > 9 { format!(" ({innings})") } else { String::new() };
-        write!(f, "{away_abbreviation_bold}{away_abbreviation}{away_abbreviation_bold} {away_score_bold}{away_runs}{away_score_bold}-{home_score_bold}{home_runs}{home_score_bold} {home_abbreviation_bold}{home_abbreviation}{home_abbreviation_bold}{extra_innings_suffix}")
-    }
-}
+#[must_use]
+pub struct OneLinerScore<'a>(&'a Score);
 
-impl Display for Score {
+impl Display for OneLinerScore<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, .. } = self;
+        let Score { away_abbreviation, away_runs, home_abbreviation, home_runs, .. } = self.0;
         write!(f, "{away_abbreviation} {away_runs}-{home_runs} {home_abbreviation}")
     }
 }
 
 // todo: use more
-pub fn modify_abbreviation(name: &TeamName) -> String {
+pub fn stalker_abbreviation(name: &TeamName) -> String {
     if name.abbreviation.len() == 3 {
         return name.abbreviation.clone();
     }
     let acronym = name.franchise_name
         .split(' ')
         .chain(name.club_name.split(' '))
-        .filter_map(|s| s.chars().nth(0))
+        .filter_map(|s| s.chars().next())
         .collect::<String>();
     if acronym.len() == 3 {
         return acronym;
@@ -195,13 +209,25 @@ pub fn modify_abbreviation(name: &TeamName) -> String {
     acronym
 }
 
-pub fn get_last_lineup_underscores(previous_lineup: &TeamWithGameData) -> [HitterLineupEntry; 9] {
-    let players = &previous_lineup.players;
+pub fn get_last_lineup_underscores(team: Option<TeamWithGameData>) -> [HitterLineupEntry; 9] {
     let mut idx = 1;
-    previous_lineup.batting_order.map_or_else(
-        || [hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")],
-        |id| hide(&players[&id].person.full_name)
-    ).map(|name| {
+
+    if let Some(team) = team && let Some(batting_order) = team.batting_order {
+        let players = &team.players;
+        batting_order.map(|id| hide(&players[&id].person.full_name))
+    } else {
+        [
+            hide("____ ____"),
+            hide("______ ______"),
+            hide("_____ _______"),
+            hide("_____ _____"),
+            hide("______ _____ ___"),
+            hide("_______ ______"),
+            hide("_____ ______"),
+            hide("______ ______"),
+            hide("____ _____")
+        ]
+    }.map(|name| {
         let entry = HitterLineupEntry::new(name, None, BattingOrderIndex { major: idx, minor: 0 }, None);
         idx += 1;
         entry
@@ -209,20 +235,22 @@ pub fn get_last_lineup_underscores(previous_lineup: &TeamWithGameData) -> [Hitte
 }
 
 pub fn lineup(team: &TeamWithGameData, stats: [HittingStat; 2], show_stats: bool, season: SeasonId) -> Result<[HitterLineupEntry; 9]> {
-    let mut players: [Option<HitterLineupEntry>; 9] = [const { None }; 9];
-    for (_, player) in team.players.iter() {
-        let person = &player.person;
-        let name = &person.full_name;
-        let Some(batting_order @ BattingOrderIndex { major: _, minor: 0 }) = player.batting_order else { continue };
-        let position = player.position;
-        let sabermetrics_stats = {
-            let id = person.id;
-            async move || single_stat!(Sabermetrics + Hitting for id; with |builder| builder.season(season)).await
-        };
-        let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.stats.hitting, sabermetrics_stats)).map(|future| future.block_on())) } else { None };
-        players[batting_order.major - 1] = Some(HitterLineupEntry::new(name.to_owned(), Some(position), batting_order, stats));
-    }
-    Ok(players.into_iter().collect::<Option<Vec<HitterLineupEntry>>>().context("Hitter was missing from lineup")?.try_into()?)
+    let mut idx = 0;
+    Ok(team.batting_order.context("Hitter was missing from lineup")?
+        .map(|id| &team.players[&id])
+        .map(|player| {
+            let person = &player.person;
+            let name = &person.full_name;
+            let position = player.position.clone();
+            let sabermetrics_stats = {
+                let id = person.id;
+                async move || single_stat!(Sabermetrics + Hitting for id; with |builder| builder.season(season)).await
+            };
+            let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.game_stats.hitting, sabermetrics_stats)).map(|future| future.block_on())) } else { None };
+            let entry = HitterLineupEntry::new(name.to_owned(), Some(position), BattingOrderIndex { major: idx + 1, minor: 0 }, stats);
+            idx += 1;
+            entry
+        }))
 }
 
 pub fn should_show_stats(game_type: GameType) -> bool {

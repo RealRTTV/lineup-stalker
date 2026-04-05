@@ -828,20 +828,21 @@ checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 
 [[package]]
 name = "lineup-stalker"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
+ "bon",
  "chrono",
  "chrono-tz",
  "cli-clipboard",
  "fxhash",
  "mlb-api",
- "pastey",
  "pollster",
  "serde",
  "serde_json",
  "tokio",
  "tokio-macros",
+ "winres",
 ]
 
 [[package]]
@@ -911,9 +912,9 @@ dependencies = [
 
 [[package]]
 name = "mlb-api"
-version = "0.1.5"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "419f352dd0dd820b095b853daa656879e56b9a9df7a493fa3a76d0c66282a6e6"
+checksum = "ffb4f05e9d600ba4d4160dd176e6a55c1ca55e2fe30520ae75a6b2168922c13e"
 dependencies = [
  "bon",
  "chrono",
@@ -1854,6 +1855,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2508,6 +2518,15 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winres"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b68db261ef59e9e52806f688020631e987592bd83619edccda9c47d42cde4f6c"
+dependencies = [
+ "toml",
+]
 
 [[package]]
 name = "wit-bindgen"

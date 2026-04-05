@@ -1,6 +1,6 @@
-use std::cell::LazyCell;
 use crate::util::ffi::{GetConsoleWindow, SetForegroundWindow};
 use anyhow::{anyhow, Result};
+use std::cell::LazyCell;
 use std::fmt::Display;
 
 pub mod pitching_line;
@@ -18,8 +18,8 @@ pub trait Post: Display {
         let text = LazyCell::new(move || self.to_string());
 
         if stdout {
-            println!("{}\n\n\n", text.to_string());
-            let _ = std::io::Write::flush(&mut std::io::stdout())?;
+            println!("{}\n\n\n", *text);
+            std::io::Write::flush(&mut std::io::stdout())?;
         }
 
         if copy {

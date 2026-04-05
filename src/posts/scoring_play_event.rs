@@ -1,11 +1,11 @@
+use crate::posts::Post;
 use crate::util::nth;
 use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
 use fxhash::FxHashMap;
 use mlb_api::game::{ActionPlayDetails, Inning, InningHalf, Play, PlayEventCommon};
 use mlb_api::meta::EventType;
 use mlb_api::person::{Ballplayer, PersonId};
-use std::fmt::{Debug, Display, Formatter};
-use crate::posts::Post;
+use std::fmt::{Display, Formatter};
 
 #[derive(Clone)]
 pub struct ScoringPlayEvent {
@@ -40,7 +40,7 @@ impl ScoringPlayEvent {
         }
     }
 
-    pub fn as_one_liner(&self) -> OneLiner {
+    pub fn as_one_liner(&self) -> OneLiner<'_> {
         OneLiner(self)
         
     }
@@ -51,10 +51,8 @@ pub struct OneLiner<'a>(&'a ScoringPlayEvent);
 
 impl Display for OneLiner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use std::fmt::Write;
-
         let ScoringPlayEvent { score, inning, half, scores, .. } = self.0;
-        write!(f, "{score} | {half} **{inning}**:", score = score.code_block(), half = half.three_char(), inning = nth(**inning))?;
+        write!(f, "{score} | {half} **{inning}**:", score = score.as_code_block(), half = half.three_char(), inning = nth(**inning))?;
         for score in scores {
             write!(f, " {score}")?;
         }
@@ -62,9 +60,9 @@ impl Display for OneLiner<'_> {
     }
 }
 
-impl Debug for ScoringPlayEvent {
+impl Display for ScoringPlayEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{score:?} ({event})", score = self.score, event = self.event)?;
+        writeln!(f, "{score} ({event})", score = self.score, event = self.event)?;
         writeln!(
             f,
             "{half} **{inning}**, **{outs}** out{out_suffix}.",
@@ -74,24 +72,11 @@ impl Debug for ScoringPlayEvent {
             out_suffix = if self.outs == 1 { "" } else { "s" }
         )?;
         for score in &self.scores {
-            writeln!(f, "{score:?}")?;
+            writeln!(f, "{}", score.as_one_liner())?;
         }
 
-        write!(f, "\n")?;
+        writeln!(f)?;
 
-        Ok(())
-    }
-}
-
-impl Display for ScoringPlayEvent {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { score, inning, half, scores, .. } = self;
-        let half = half.three_char();
-        let inning = nth(**inning);
-        write!(f, "`{score}` | {half} **{inning}**:")?;
-        for score in scores {
-            write!(f, " {score}")?;
-        }
         Ok(())
     }
 }

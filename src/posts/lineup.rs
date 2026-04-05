@@ -2,14 +2,13 @@ use crate::components::hitting::HitterLineupEntry;
 use crate::components::pitching::PitcherLineupEntry;
 use crate::components::record_against::RecordAgainst;
 use crate::components::standings::Standings;
+use crate::posts::Post;
 use crate::util::stat::HittingStat;
 use crate::util::statsapi::Score;
 use chrono::DateTime;
 use chrono_tz::Tz;
-use std::fmt::Display;
 use mlb_api::HomeAway;
-use mlb_api::person::PersonId;
-use crate::posts::Post;
+use std::fmt::Display;
 
 #[derive(Clone)]
 pub struct Lineup {
@@ -52,27 +51,23 @@ impl Lineup {
     pub fn update_lineup(&mut self, lineup: [HitterLineupEntry; 9]) {
         self.lineup = lineup;
     }
-    
-    pub fn pitcher_ids(&self) -> (PersonId, PersonId) {
-        (self.home_pitcher_stats.id(), self.away_pitcher_stats.id())
-    }
 }
 
 impl Display for Lineup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { datetime, title, time, previous, record, standings, home_pitcher_stats, away_pitcher_stats, hitting_stats: [first_stat, second_stat], lineup } = self;
+        let Self { datetime, title, time, previous, record, standings, pitchers, hitting_stats: [first_stat, second_stat], lineup } = self;
 
         writeln!(f, "# {} {title}", datetime.format("%m*|*%d*|*%y"))?;
         writeln!(f, "First Pitch: {time}")?;
         if let Some(previous) = previous {
-            writeln!(f, "Previous Game: {previous:?}")?;
+            writeln!(f, "Previous Game: {previous}")?;
         }
         writeln!(f, "Record Against: {record}")?;
         writeln!(f, "Standings: {standings}")?;
         writeln!(f, "### __Starting Pitchers__")?;
-        writeln!(f, "{away_pitcher_stats}")?;
-        writeln!(f, "{home_pitcher_stats}")?;
-        writeln!(f, "### __Starting Lineup (.{first_stat_value} *|* .{second_stat_value})__", first_stat_value = first_stat.to_string(), second_stat_value = second_stat.to_string())?;
+        writeln!(f, "{}", pitchers.away)?;
+        writeln!(f, "{}", pitchers.home)?;
+        writeln!(f, "### __Starting Lineup (.{first_stat} *|* .{second_stat})__")?;
         for line in lineup {
             writeln!(f, "{line}")?;
         }

@@ -1,7 +1,9 @@
+use crate::util::statsapi::stalker_abbreviation;
+use anyhow::Result;
 use mlb_api::game::Linescore;
-use std::fmt::{Display, Formatter, Write};
-use mlb_api::HomeAway;
 use mlb_api::team::Team;
+use mlb_api::HomeAway;
+use std::fmt::{Display, Formatter, Write};
 
 #[derive(Clone)]
 pub struct LineScore {
@@ -13,14 +15,14 @@ pub struct LineScore {
 impl LineScore {
     pub fn new(linescore: &Linescore, teams: HomeAway<&Team<()>>) -> Result<Self> {
         let mut header = "**`    ".to_owned();
-        let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = teams.away.name.abbreviation);
-        let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = teams.home.name.abbreviation);
+        let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = stalker_abbreviation(&teams.away.name));
+        let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = stalker_abbreviation(&teams.home.name));
 
         for inning in &linescore.innings {
             write!(
                 &mut header,
                 "|{n: ^3}",
-                n = inning.inning,
+                n = *inning.inning,
             )?;
             write!(
                 &mut away_linescore,

@@ -1,9 +1,11 @@
+use crate::posts::Post;
 use mlb_api::game::PlayerWithGameData;
-use mlb_api::stats::{CountingStat, InningsPitched};
-use std::fmt::{Debug, Display, Formatter};
 use mlb_api::stats::raw::pitching;
 use mlb_api::stats::wrappers::WithNone;
-use crate::posts::Post;
+use mlb_api::stats::{CountingStat, InningsPitched};
+use std::fmt::{Display, Formatter};
+use fxhash::FxHashMap;
+use mlb_api::person::{Ballplayer, PersonId};
 
 #[derive(Clone)]
 pub struct PitcherFinalLine {
@@ -12,10 +14,10 @@ pub struct PitcherFinalLine {
 }
 
 impl PitcherFinalLine {
-    pub fn from_play(pitcher: &PlayerWithGameData) -> Self {
+    pub fn from_play(pitcher: &PlayerWithGameData, all_players: &FxHashMap<PersonId, Ballplayer<()>>) -> Self {
         Self {
-            boxscore_name: pitcher.boxscore_name.clone(),
-            pitching_line: PitchingLine::from_stats(&pitcher.stats.pitching, false, false),
+            boxscore_name: all_players[&pitcher.person.id].boxscore_name.clone(),
+            pitching_line: PitchingLine::from_stats(&pitcher.game_stats.pitching, false, false),
         }
     }
 }
@@ -27,12 +29,13 @@ impl Display for PitcherFinalLine {
             pitching_line
         } = self;
         writeln!(f, "### __{boxscore_name}'s Final Line__:")?;
-        writeln!(f, "{pitching_line:?}")?;
-        writeln!(f, "")?;
+        writeln!(f, "{pitching_line}")?;
+        writeln!(f)?;
         Ok(())
     }
 }
 
+#[derive(Clone)]
 pub struct PitchingLine {
     innings_pitched: InningsPitched,
     hits: CountingStat,
@@ -73,6 +76,10 @@ impl PitchingLine {
     pub fn is_complete_game(&self) -> bool {
         self.is_complete_game
     }
+    
+    pub fn as_one_liner(&self) -> OneLiner<'_> {
+        OneLiner(self)
+    }
 }
 
 impl Display for PitchingLine {
@@ -82,26 +89,29 @@ impl Display for PitchingLine {
         let is_maddux = self.is_maddux();
         let maddux_left = if is_maddux { "__*" } else { "" };
         let maddux_right = if is_maddux { "*__" } else { "" };
-        write!(f, "**{innings_pitched}** IP, **{hits}** H, **{earned_runs}** ER, **{walks}** BB, **{strikeout_surroundings}{strikeouts}** K{strikeout_surroundings}, **{maddux_left}{pitches}{maddux_right}** P")?;
-        if self.is_masterpiece() {
+        writeln!(f, "> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeout_surroundings}{strikeouts}{strikeout_surroundings}** K")?;
+        if self.show_game_score {
             write!(f, ", **{game_score}** GS", game_score = self.game_score())?;
         }
+        writeln!(f, "> Pitch Count: **{maddux_left}{pitches}{maddux_right}**")?;
         Ok(())
     }
 }
 
-impl Debug for PitchingLine {
+#[must_use]
+pub struct OneLiner<'a>(&'a PitchingLine);
+
+impl Display for OneLiner<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { innings_pitched, hits, earned_runs, walks, strikeouts, pitches, .. } = self;
+        let PitchingLine { innings_pitched, hits, earned_runs, walks, strikeouts, pitches, .. } = self.0;
         let strikeout_surroundings = if *strikeouts >= 12 { "__" } else { "" };
-        let is_maddux = self.is_maddux();
+        let is_maddux = self.0.is_maddux();
         let maddux_left = if is_maddux { "__*" } else { "" };
         let maddux_right = if is_maddux { "*__" } else { "" };
-        writeln!(f, "\n> **{innings_pitched}** IP | **{hits}** H | **{earned_runs}** ER | **{walks}** BB | **{strikeout_surroundings}{strikeouts}{strikeout_surroundings}** K")?;
-        if self.is_masterpiece() {
-            write!(f, ", **{game_score}** GS", game_score = self.game_score())?;
+        write!(f, "**{innings_pitched}** IP, **{hits}** H, **{earned_runs}** ER, **{walks}** BB, **{strikeout_surroundings}{strikeouts}** K{strikeout_surroundings}, **{maddux_left}{pitches}{maddux_right}** P")?;
+        if self.0.show_game_score {
+            write!(f, ", **{game_score}** GS", game_score = self.0.game_score())?;
         }
-        writeln!(f, "> Pitch Count: **{maddux_left}{pitches}{maddux_right}**")?;
         Ok(())
     }
 }

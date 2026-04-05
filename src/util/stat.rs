@@ -57,7 +57,7 @@ impl HittingStat {
         }
     }
 
-    pub async fn get(self, stats: &WithNone<hitting::__BoxscoreStatsData>, sabermetrics_stats: impl AsyncFnOnce() -> Result<WithPlayer<hitting::__SabermetricsStatsData>>) -> String {
+    pub async fn get(self, stats: &WithNone<hitting::__BoxscoreStatsData>, sabermetrics_stats: impl AsyncFnOnce() -> Result<Box<WithPlayer<hitting::__SabermetricsStatsData>>, mlb_api::request::Error>) -> String {
         use mlb_api::stats::derived::*;
 
         match self {

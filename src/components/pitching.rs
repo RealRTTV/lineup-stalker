@@ -1,7 +1,7 @@
+use mlb_api::person::PersonId;
 use mlb_api::stats::{InningsPitched, TwoDecimalPlaceRateStat};
 use mlb_api::Handedness;
 use std::fmt::{Display, Formatter};
-use mlb_api::person::PersonId;
 
 #[derive(Clone)]
 pub struct PitcherLineupEntry {

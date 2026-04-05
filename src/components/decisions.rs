@@ -1,10 +1,11 @@
+use crate::posts::pitching_line::PitchingLine;
 use anyhow::{Context, Result};
 use mlb_api::game::{Boxscore, PlayerWithGameData, TeamWithGameData};
+use mlb_api::person::{Ballplayer, PersonId};
 use mlb_api::stats::CountingStat;
+use mlb_api::HomeAway;
 use std::fmt::{Display, Formatter};
-use mlb_api::person::PersonId;
-use mlb_api::{HomeAway, TeamSide};
-use crate::posts::pitching_line::PitchingLine;
+use fxhash::FxHashMap;
 
 #[derive(Clone)]
 pub struct Decisions {
@@ -14,7 +15,7 @@ pub struct Decisions {
 }
 
 impl Decisions {
-    pub fn new(decisions: &mlb_api::game::Decisions, boxscore: &Boxscore) -> Result<Self> {
+    pub fn new(decisions: &mlb_api::game::Decisions, boxscore: &Boxscore, all_players: &FxHashMap<PersonId, Ballplayer<()>>) -> Result<Self> {
         fn get_person_with_team(boxscore: &Boxscore, id: PersonId) -> Result<(&PlayerWithGameData, &TeamWithGameData)> {
             let HomeAway { home, away } = boxscore.teams.as_ref().map(|team| team.players.get(&id).map(|player| (player, team)));
             home.or(away).context("Expected the winner to play in the game")
@@ -26,26 +27,26 @@ impl Decisions {
         Ok(Self {
             winner: {
                 Win {
-                    name: winner.boxscore_name.clone(),
+                    name: all_players[&winner.person.id].boxscore_name.clone(),
                     wins: winner.season_stats.pitching.wins.unwrap_or_default(),
                     losses: winner.season_stats.pitching.losses.unwrap_or_default(),
-                    line: PitchingLine::from_stats(&winner.stats.pitching, winners_team.pitchers.len() == 1, false),
+                    line: PitchingLine::from_stats(&winner.game_stats.pitching, winners_team.pitchers.len() == 1, false),
                 }
             },
             loser: {
                 Loss {
-                    name: loser.boxscore_name.clone(),
+                    name: all_players[&loser.person.id].boxscore_name.clone(),
                     wins: loser.season_stats.pitching.wins.unwrap_or_default(),
                     losses: loser.season_stats.pitching.losses.unwrap_or_default(),
-                    line: PitchingLine::from_stats(&loser.stats.pitching, losers_team.pitchers.len() == 1, false),
+                    line: PitchingLine::from_stats(&loser.game_stats.pitching, losers_team.pitchers.len() == 1, false),
                 }
             },
             save: {
                 decisions.save.as_ref().and_then(|person| boxscore.find_player_with_game_data(person.id)).map(|closer| {
                     Save {
-                        name: closer.boxscore_name.clone(),
+                        name: all_players[&closer.person.id].boxscore_name.clone(),
                         saves: closer.season_stats.pitching.saves.unwrap_or_default(),
-                        line: PitchingLine::from_stats(&closer.stats.pitching, false, false),
+                        line: PitchingLine::from_stats(&closer.game_stats.pitching, false, false),
                     }
                 })
             },
@@ -64,10 +65,6 @@ impl Display for Decisions {
     }
 }
 
-fn pitching_line() -> PitchingLine {
-
-}
-
 #[derive(Clone)]
 struct Win {
     name: String,
@@ -78,7 +75,7 @@ struct Win {
 
 impl Display for Win {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (**{}**-{}) | {}", self.name, self.wins, self.losses, self.line)
+        write!(f, "{} (**{}**-{}) | {}", self.name, self.wins, self.losses, self.line.as_one_liner())
     }
 }
 
@@ -92,7 +89,7 @@ struct Loss {
 
 impl Display for Loss {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({}-**{}**) | {}", self.name, self.wins, self.losses, self.line)
+        write!(f, "{} ({}-**{}**) | {}", self.name, self.wins, self.losses, self.line.as_one_liner())
     }
 }
 
@@ -105,7 +102,7 @@ struct Save {
 
 impl Display for Save {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (**{}**) | {}", self.name, self.saves, self.line)
+        write!(f, "{} (**{}**) | {}", self.name, self.saves, self.line.as_one_liner())
     }
 }
 

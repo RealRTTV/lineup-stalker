@@ -8,9 +8,9 @@ pub struct RecordAgainst {
 }
 
 impl RecordAgainst {
-    pub fn new(our_abbreviation: &str, their_abbreviation: &str) -> Self {
+    pub fn new(our_abbreviation: String, their_abbreviation: String) -> Self {
         Self {
-            inner: Score::new(our_abbreviation.to_owned(), 0, their_abbreviation.to_owned(), 0, 0, false, BoldingDisplayKind::MostRecentlyScored, BoldingDisplayKind::WinningTeam)
+            inner: Score::new(our_abbreviation, 0, their_abbreviation, 0, 0, TeamSide::default(), BoldingDisplayKind::MostRecentlyScored, BoldingDisplayKind::WinningTeam)
         }
     }
 
@@ -28,6 +28,6 @@ impl RecordAgainst {
 impl Display for RecordAgainst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let Self { inner } = self;
-        write!(f, "{inner:?}")
+        write!(f, "{inner}")
     }
 }

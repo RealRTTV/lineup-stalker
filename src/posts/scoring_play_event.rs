@@ -1,10 +1,11 @@
-use std::fmt::{Debug, Display, Formatter};
-use anyhow::{Result, Context};
-use mlb_api::game::{ActionPlayDetails, Inning, InningHalf, Play, PlayEventCommon};
-use mlb_api::meta::EventType;
-use serde_json::Value;
 use crate::util::nth;
 use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
+use fxhash::FxHashMap;
+use mlb_api::game::{ActionPlayDetails, Inning, InningHalf, Play, PlayEventCommon};
+use mlb_api::meta::EventType;
+use mlb_api::person::{Ballplayer, PersonId};
+use std::fmt::{Debug, Display, Formatter};
+use crate::posts::Post;
 
 #[derive(Clone)]
 pub struct ScoringPlayEvent {
@@ -22,7 +23,7 @@ impl ScoringPlayEvent {
         play: &Play,
         home_abbreviation: &str,
         away_abbreviation: &str,
-        all_player_names: &[&str],
+        all_player_names: &FxHashMap<PersonId, Ballplayer<()>>,
         event: EventType,
     ) -> Self {
         let home_score = details.home_score;
@@ -39,13 +40,21 @@ impl ScoringPlayEvent {
         }
     }
 
-    pub fn as_one_liner(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    pub fn as_one_liner(&self) -> OneLiner {
+        OneLiner(self)
+        
+    }
+}
+
+#[must_use]
+pub struct OneLiner<'a>(&'a ScoringPlayEvent);
+
+impl Display for OneLiner<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
 
-        let Self { score, inning, top, scores, .. } = self;
-        let half = if *top { "Top" } else { "Bot" };
-        let inning = nth(*inning as usize);
-        write!(f, "{score} | {half} **{inning}**:", score = score.format_code_block())?;
+        let ScoringPlayEvent { score, inning, half, scores, .. } = self.0;
+        write!(f, "{score} | {half} **{inning}**:", score = score.code_block(), half = half.three_char(), inning = nth(**inning))?;
         for score in scores {
             write!(f, " {score}")?;
         }
@@ -86,3 +95,5 @@ impl Display for ScoringPlayEvent {
         Ok(())
     }
 }
+
+impl Post for ScoringPlayEvent {}

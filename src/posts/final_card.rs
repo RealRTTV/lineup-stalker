@@ -1,43 +1,29 @@
-use std::fmt::{Display, Formatter};
-use crate::posts::components::decisions::Decisions;
-use crate::posts::components::line_score::LineScore;
-use crate::posts::components::next_game::NextGame;
-use crate::posts::components::record_against::RecordAgainst;
-use crate::posts::components::standings::Standings;
+use crate::components::decisions::Decisions;
+use crate::components::linescore::LineScore;
+use crate::components::next_game::NextGame;
+use crate::components::record_against::RecordAgainst;
+use crate::components::standings::Standings;
 use crate::util::statsapi::Score;
+use std::fmt::{Display, Formatter};
+use crate::components::pitching_masterpiece::PitchingMasterpiece;
+use crate::posts::Post;
 
 #[derive(Clone)]
 pub struct FinalCard {
-    score: Score,
-    standings: Option<Standings>,
-    record_text: &'static str,
-    record: RecordAgainst,
-    next_game: Option<NextGame>,
-    masterpieces: String,
-    line_score: LineScore,
-    scoring_plays: Vec<String>,
-    decisions: Option<Decisions>,
-}
-
-impl FinalCard {
-    pub fn new(score: Score, standings: Option<Standings>, record_text: &'static str, record: RecordAgainst, next_game: Option<NextGame>, masterpieces: String, line_score: LineScore, scoring_plays: Vec<String>, decisions: Option<Decisions>) -> Self {
-        Self {
-            score,
-            standings,
-            record_text,
-            record,
-            next_game,
-            masterpieces,
-            line_score,
-            scoring_plays,
-            decisions,
-        }
-    }
+    pub score: Score,
+    pub standings: Option<Standings>,
+    pub record_text: &'static str,
+    pub record: RecordAgainst,
+    pub next_game: Option<NextGame>,
+    pub pitching_masterpiece: Option<PitchingMasterpiece>,
+    pub linescore: LineScore,
+    pub scoring_plays: String,
+    pub decisions: Option<Decisions>,
 }
 
 impl Display for FinalCard {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { score, standings, record_text, record, next_game, masterpieces, line_score, scoring_plays, decisions } = self;
+        let Self { score, standings, record_text, record, next_game, pitching_masterpiece: pitching_masterpiece, linescore: line_score, scoring_plays, decisions } = self;
         writeln!(f, "## Final Score")?;
         writeln!(f, "{score:?}")?;
         if let Some(standings) = standings {
@@ -47,11 +33,13 @@ impl Display for FinalCard {
         if let Some(next_game) = next_game {
             writeln!(f, "Next Game: {next_game}")?;
         }
-        write!(f, "{masterpieces}")?;
+        if let Some(pitching_masterpiece) = self.pitching_masterpiece {
+            writeln!(f, "{pitching_masterpiece}")?;
+        }
         writeln!(f, "### __Line Score__")?;
         writeln!(f, "{line_score}")?;
         writeln!(f, "### __Scoring Plays__")?;
-        writeln!(f, "{}", scoring_plays.join("\n"))?;
+        writeln!(f, "{scoring_plays}")?;
         if let Some(decisions) = decisions {
             writeln!(f, "### __Pitcher Decisions__")?;
             writeln!(f, "{decisions}")?;
@@ -61,3 +49,5 @@ impl Display for FinalCard {
         Ok(())
     }
 }
+
+impl Post for FinalCard {}

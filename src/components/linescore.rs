@@ -1,8 +1,7 @@
+use mlb_api::game::Linescore;
 use std::fmt::{Display, Formatter, Write};
-use anyhow::{Result, Context};
-use mlb_api::game::{Boxscore, InningHalf, Linescore};
-use serde_json::Value;
-use crate::posts::components::team_stats_log::TeamStatsLog;
+use mlb_api::HomeAway;
+use mlb_api::team::Team;
 
 #[derive(Clone)]
 pub struct LineScore {
@@ -12,10 +11,10 @@ pub struct LineScore {
 }
 
 impl LineScore {
-    pub fn new(linescore: &Linescore) -> Self {
+    pub fn new(linescore: &Linescore, teams: HomeAway<&Team<()>>) -> Result<Self> {
         let mut header = "**`    ".to_owned();
-        let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = away.abbreviation);
-        let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = home.abbreviation);
+        let mut away_linescore = format!("`{abbreviation: <3} ", abbreviation = teams.away.name.abbreviation);
+        let mut home_linescore = format!("`{abbreviation: <3} ", abbreviation = teams.home.name.abbreviation);
 
         for inning in &linescore.innings {
             write!(

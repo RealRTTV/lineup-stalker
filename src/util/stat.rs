@@ -1,10 +1,10 @@
 #![allow(non_snake_case)]
 
-use std::fmt::Display;
 use anyhow::Result;
 use mlb_api::stats::raw::hitting;
-use mlb_api::stats::TwoDecimalPlaceRateStat;
 use mlb_api::stats::wrappers::{WithNone, WithPlayer};
+use mlb_api::stats::TwoDecimalPlaceRateStat;
+use std::fmt::Display;
 
 #[derive(Copy, Clone)]
 #[allow(non_camel_case_types)]
@@ -57,10 +57,10 @@ impl HittingStat {
         }
     }
 
-    pub async fn get(self, stats: &WithNone<hitting::__BoxscoreStatsData>, sabermetrics_stats: impl AsyncFnOnce() -> Result<WithPlayer<hitting::__SabermetricsStatsData>>) -> Result<String> {
+    pub async fn get(self, stats: &WithNone<hitting::__BoxscoreStatsData>, sabermetrics_stats: impl AsyncFnOnce() -> Result<WithPlayer<hitting::__SabermetricsStatsData>>) -> String {
         use mlb_api::stats::derived::*;
 
-        Ok(match self {
+        match self {
             Self::AVG => avg(stats.hits, stats.at_bats).to_string(),
             Self::SLG => slg(stats.total_bases, stats.at_bats).to_string(),
             Self::OBP => obp(stats.hits, stats.base_on_balls, stats.intentional_walks, stats.hit_by_pitch, stats.at_bats, stats.sac_bunts, stats.sac_flies).to_string(),
@@ -70,9 +70,9 @@ impl HittingStat {
             Self::K => k_pct(stats.strikeouts, stats.plate_appearances).to_string(),
             Self::ISO => iso(extra_bases(stats.doubles, stats.triples, stats.home_runs), stats.at_bats).to_string(),
             Self::BBK => TwoDecimalPlaceRateStat::new(strikeout_to_walk_ratio(stats.strikeouts, stats.base_on_balls).recip()).to_string(),
-            Self::wOBA => sabermetrics_stats().await?.wOBA.unwrap_or_default().to_string(),
-            Self::wRCp => sabermetrics_stats().await?.wRCp.unwrap_or_default().to_string(),
-        })
+            Self::wOBA => sabermetrics_stats().await.ok().and_then(|stats| stats.wOBA.ok()).unwrap_or_default().to_string(),
+            Self::wRCp => sabermetrics_stats().await.ok().and_then(|stats| stats.wRCp.ok()).unwrap_or_default().to_string(),
+        }
     }
 }
 

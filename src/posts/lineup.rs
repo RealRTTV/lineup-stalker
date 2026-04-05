@@ -1,12 +1,15 @@
-use std::fmt::Display;
-use chrono::DateTime;
-use chrono_tz::Tz;
-use crate::posts::components::hitting::HitterLineupEntry;
-use crate::posts::components::pitching::PitcherLineupEntry;
-use crate::posts::components::record_against::RecordAgainst;
-use crate::posts::components::standings::Standings;
+use crate::components::hitting::HitterLineupEntry;
+use crate::components::pitching::PitcherLineupEntry;
+use crate::components::record_against::RecordAgainst;
+use crate::components::standings::Standings;
 use crate::util::stat::HittingStat;
 use crate::util::statsapi::Score;
+use chrono::DateTime;
+use chrono_tz::Tz;
+use std::fmt::Display;
+use mlb_api::HomeAway;
+use mlb_api::person::PersonId;
+use crate::posts::Post;
 
 #[derive(Clone)]
 pub struct Lineup {
@@ -16,8 +19,7 @@ pub struct Lineup {
     previous: Option<Score>,
     pub record: RecordAgainst,
     pub standings: Standings,
-    home_pitcher_stats: PitcherLineupEntry,
-    away_pitcher_stats: PitcherLineupEntry,
+    pitchers: HomeAway<PitcherLineupEntry>,
     hitting_stats: [HittingStat; 2],
     lineup: [HitterLineupEntry; 9],
 }
@@ -30,8 +32,7 @@ impl Lineup {
         previous: Option<Score>,
         record: RecordAgainst,
         standings: Standings,
-        home_pitcher_stats: PitcherLineupEntry,
-        away_pitcher_stats: PitcherLineupEntry,
+        pitchers: HomeAway<PitcherLineupEntry>,
         hitting_stats: [HittingStat; 2],
         lineup: [HitterLineupEntry; 9],
     ) -> Self {
@@ -42,8 +43,7 @@ impl Lineup {
             previous,
             record,
             standings,
-            home_pitcher_stats,
-            away_pitcher_stats,
+            pitchers,
             hitting_stats,
             lineup,
         }
@@ -51,6 +51,10 @@ impl Lineup {
 
     pub fn update_lineup(&mut self, lineup: [HitterLineupEntry; 9]) {
         self.lineup = lineup;
+    }
+    
+    pub fn pitcher_ids(&self) -> (PersonId, PersonId) {
+        (self.home_pitcher_stats.id(), self.away_pitcher_stats.id())
     }
 }
 
@@ -77,3 +81,5 @@ impl Display for Lineup {
         Ok(())
     }
 }
+
+impl Post for Lineup {}

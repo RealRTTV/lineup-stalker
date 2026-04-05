@@ -1,51 +1,29 @@
-use std::fmt::Display;
-use anyhow::{Result, anyhow};
-use crate::posts::defensive_substitution::DefensiveSubstitution;
-use crate::posts::defensive_switch::DefensiveSwitch;
-use crate::posts::final_card::FinalCard;
-use crate::posts::lineup::Lineup;
-use crate::posts::offensive_substitution::OffensiveSubstitution;
-use crate::posts::pitching_line::PitcherFinalLine;
-use crate::posts::scoring_play::ScoringPlay;
-use crate::posts::scoring_play_event::ScoringPlayEvent;
+use std::cell::LazyCell;
 use crate::util::ffi::{GetConsoleWindow, SetForegroundWindow};
+use anyhow::{anyhow, Result};
+use std::fmt::Display;
 
 pub mod pitching_line;
 pub mod scoring_play;
 pub mod scoring_play_event;
 pub mod lineup;
 pub mod final_card;
-pub mod components;
 
-#[derive(Clone)]
-pub enum Post {
-    Lineup(Lineup),
-    ScoringPlay(ScoringPlay),
-    PitchingSubstitution(PitcherFinalLine),
-    OffensiveSubstitution(OffensiveSubstitution),
-    DefensiveSubstitution(DefensiveSubstitution),
-    DefensiveSwitch(DefensiveSwitch),
-    WildPitch(ScoringPlayEvent),
-    StolenHome(ScoringPlayEvent),
-    FinalCard(FinalCard),
-}
-
-impl Post {
-    #[inline]
-    pub fn send(&self) -> Result<()> {
+pub trait Post: Display {
+    fn send(&self) -> Result<()> {
         self.send_with_settings(true, true, false)
     }
 
-    pub fn send_with_settings(&self, stdout: bool, copy: bool, set_foreground_window: bool) -> Result<()> {
-        let text = self.to_string();
+    fn send_with_settings(&self, stdout: bool, copy: bool, set_foreground_window: bool) -> Result<()> {
+        let text = LazyCell::new(move || self.to_string());
 
         if stdout {
-            println!("{text}\n\n\n");
+            println!("{}\n\n\n", text.to_string());
             let _ = std::io::Write::flush(&mut std::io::stdout())?;
         }
 
         if copy {
-            cli_clipboard::set_contents(text).map_err(|_| anyhow!("Failed to set clipboard"))?;
+            cli_clipboard::set_contents(text.to_string()).map_err(|_| anyhow!("Failed to set clipboard"))?;
         }
 
         if set_foreground_window {
@@ -56,18 +34,3 @@ impl Post {
     }
 }
 
-impl Display for Post {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Lineup(inner) => write!(f, "{inner}"),
-            Self::ScoringPlay(inner) => write!(f, "{inner:?}"),
-            Self::PitchingSubstitution(inner) => write!(f, "{inner:?}"),
-            Self::OffensiveSubstitution(inner) => write!(f, "{inner:?}"),
-            Self::DefensiveSubstitution(inner) => write!(f, "{inner:?}"),
-            Self::DefensiveSwitch(inner) => write!(f, "{inner:?}"),
-            Self::WildPitch(inner) => write!(f, "{inner:?}"),
-            Self::StolenHome(inner) => write!(f, "{inner:?}"),
-            Self::FinalCard(inner) => write!(f, "{inner}"),
-        }
-    }
-}

@@ -1,50 +1,45 @@
-use core::ffi::c_void;
-use std::convert::identity;
 use std::io::{stderr, stdout};
-use std::ops::{ControlFlow, Deref};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::ops::ControlFlow;
 use std::thread;
 use std::time::Duration;
 
+use components::decisions::Decisions;
+use components::linescore::LineScore;
+use components::next_game::NextGame;
+use components::pitching::PitcherLineupEntry;
+use components::record_against::RecordAgainst;
+use components::standings::Standings;
 use crate::posts::final_card::FinalCard;
 use crate::posts::lineup::Lineup;
 use crate::posts::pitching_line::PitcherFinalLine;
 use crate::posts::scoring_play::ScoringPlay;
 use crate::posts::scoring_play_event::ScoringPlayEvent;
 use crate::posts::Post;
-use crate::posts::components::decisions::Decisions;
-use crate::util::fangraphs::{BALLPARK_ADJUSTMENTS, WOBA_CONSTANTS};
-use crate::util::ffi::{self, ConsoleCursorInfo};
-use crate::posts::components::line_score::LineScore;
-use crate::posts::components::next_game::NextGame;
-use crate::posts::components::pitching::PitcherLineupEntry;
-use crate::posts::components::record_against::RecordAgainst;
-use crate::posts::components::standings::Standings;
+use crate::util::ffi::{self};
 use crate::util::stat::HittingStat;
-use crate::util::statsapi::{get_last_lineup_underscores, modify_abbreviation, pitching_stats, BoldingDisplayKind, Score};
-use crate::posts::components::team_stats_log::TeamStatsLog;
+use crate::util::statsapi::{get_last_lineup_underscores, modify_abbreviation, BoldingDisplayKind, Score};
 use crate::util::{clear_screen, get_team_color_escape, statsapi};
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use chrono_tz::Tz::America__Toronto;
 use fxhash::FxHashSet;
 use mlb_api::game::{GameId, LiveFeedRequest, LiveFeedResponse, PlayEvent, PlayStream, PlayStreamEvent};
+use mlb_api::meta::{EventType, GameType};
 use mlb_api::request::RequestURLBuilderExt;
-use mlb_api::schedule::{ScheduleGame, ScheduleRequest, ScheduleResponse};
+use mlb_api::schedule::{ScheduleGame, ScheduleRequest};
 use mlb_api::sport::SportId;
-use mlb_api::{venue_hydrations, HomeAway, TeamSide};
-use mlb_api::meta::EventType;
-use mlb_api::person::PersonId;
 use mlb_api::venue::VenuesRequest;
-use serde_json::Value;
+use mlb_api::{venue_hydrations, HomeAway, TeamSide};
+use mlb_api::person::PersonId;
+use mlb_api::stats::derived::era;
+use crate::components::pitching_masterpiece::PitchingMasterpiece;
 
 pub const TIMEZONE: Tz = America__Toronto;
 
 pub mod util;
 pub mod posts;
-
+pub mod components;
 // todo: reimplement cancelled listener
 // fn create_cancelled_listener() -> Arc<AtomicBool> {
 //     let cancelled = Arc::new(AtomicBool::new(false));
@@ -86,7 +81,7 @@ async fn main0() -> Result<()> {
         };
 
         loop {
-            if live_feed.live.boxscore.teams.choose(cheering_for).batting_order.is_empty() {
+            if live_feed.live.boxscore.teams.as_ref().choose(cheering_for).batting_order.is_empty() {
                 print!("\rLoading{: <pad$}", ".".repeat(dots + 1), pad = 3 - dots);
                 ffi::flush();
                 dots = (dots + 1) % 3;
@@ -105,26 +100,20 @@ async fn main0() -> Result<()> {
     let (game_id, cheering_for, stats) = get_id()?;
     ffi::set_cursor(0, 0);
     let mut live_feed: LiveFeedResponse = LiveFeedRequest::builder().id(game_id).build_and_get()?;
-    let (lineup, next_game, (home_pitcher_id, away_pitcher_id)) = lines(&live_feed, cheering_for, game_id, stats)?;
-    let mut post = Post::Lineup(lineup);
-    post.send_with_settings(true, true, true)?;
+    let (mut lineup_post, next_game) = lines(&live_feed, cheering_for, stats).await?;
+    lineup_post.send_with_settings(true, true, true)?;
     live_feed = await_filled_batting_order(Ok(live_feed), cheering_for).await?;
     ffi::set_cursor(0, 0);
-    if let Post::Lineup(inner) = &mut post {
-        let lineup = statsapi::lineup(&live_feed.live.boxscore.teams.choose(cheering_for), stats, statsapi::should_show_stats(live_feed.data.game_type), live_feed.data.season)?;
-        inner.update_lineup(lineup);
-        post.send()?;
-    }
-    let Post::Lineup(Lineup { record, standings, .. }) = post else { return Err(anyhow!("Post was not a lineup??")) };
+    let lineup = statsapi::lineup(&live_feed.live.boxscore.teams.choose(cheering_for), stats, statsapi::should_show_stats(live_feed.data.game_type), live_feed.data.season)?;
+    lineup_post.update_lineup(lineup);
+    lineup_post.send()?;
     posts_loop(
         live_feed,
         cheering_for,
-        standings,
-        record,
+        lineup_post.standings,
+        lineup_post.record,
         next_game,
-        home_pitcher_id,
-        away_pitcher_id,
-    )?;
+    ).await?;
     Ok(())
 }
 
@@ -339,19 +328,10 @@ async fn posts_loop(
     mut standings: Standings,
     mut record: RecordAgainst,
     next_game: Option<NextGame>,
-    home_starter_id: PersonId,
-    away_starter_id: PersonId,
 ) -> Result<()> {
-    let game_id = live_feed.id;
-    let game_type = live_feed.data.game_type;
-    let all_player_names = live_feed.data.players
-        .values()
-        .map(|player| player.full_name.as_str())
-        .collect::<Vec<&str>>();
-    let mut scoring_plays = Vec::new();
-    let mut previous_play_plus_play_event_len = 0;
-
-    let HomeAway { home: home_starter, away: away_starter } = HomeAway::new(home_starter_id, away_starter_id).map(|id| live_feed.data.players.get(&id).expect("SP was not in game").full_name.clone());
+    let our_abbreviation = modify_abbreviation(&live_feed.data.teams.as_ref().choose(cheering_for).name);
+    let mut scoring_plays = String::new();
+    let HomeAway { home: home_starter_id, away: away_starter_id } = live_feed.data.probable_pitchers.as_ref().map(|person| person.id);
 
     PlayStream::with_presupplied_feed::<anyhow::Error, _>(live_feed, async |event, meta, data, linescore, boxscore| {
         match event {
@@ -361,49 +341,45 @@ async fn posts_loop(
                         &play,
                         &data.teams.home.name.abbreviation,
                         &data.teams.away.name.abbreviation,
-                        &all_player_names,
+                        &live_feed.data.players,
                     )?;
-                    scoring_plays.push(scoring_play.as_one_liner());
-                    Post::ScoringPlay(scoring_play).send()?;
+                    writeln!(&mut scoring_plays, "{}", scoring_play.as_one_liner())?;
+                    scoring_play.send()?;
                 }
             }
             PlayStreamEvent::PlayEvent(play_event, play) => {
                 match play_event {
                     PlayEvent::Action { details, common, .. } => {
                         match details.event {
-                            EventType::PitchingSubstitution if details.description.contains(&home_starter) || details.description.contains(&away_starter) => {
-                                let id = if details.description.contains(home_starter) {
+                            EventType::PitchingSubstitution if data.game_type != GameType::SpringTraining => {
+                                let new_pitcher = common.player.unwrap_or(PersonId::new(0));
+                                let new_pitcher_team = boxscore.teams.as_ref()
+                                    .map(|team| team.pitchers.iter().nth(2).is_some_and(|second_pitcher| second_pitcher == new_pitcher));
+                                let id = if new_pitcher_team.home {
                                     home_starter_id
                                 } else {
                                     away_starter_id
                                 };
-                                let pitching_substitution = PitcherFinalLine::from_play(boxscore.find_player_with_game_data(id).context("Pitcher did not play in the game?")?)?;
-                                Post::PitchingSubstitution(pitching_substitution).send()?;
+                                let final_line = PitcherFinalLine::from_play(boxscore.find_player_with_game_data(id).context("Pitcher did not play in the game?")?);
+                                final_line.send()?;
                             },
-                            EventType::PassedBall | EventType::WildPitch if details.is_scoring_play => {
-                                let wild_pitch = ScoringPlayEvent::from_play(
+                            event @ (EventType::PassedBall | EventType::WildPitch | EventType::StolenBaseHome) if details.is_scoring_play => {
+                                let simplified_event_type = match event {
+                                    EventType::PassedBall | EventType::WildPitch => EventType::WildPitch,
+                                    EventType::StolenBaseHome => EventType::StolenBase,
+                                    _ => bail!("Unknown scoring play event type"),
+                                };
+                                let scoring_play_event = ScoringPlayEvent::from_play(
                                     (details, common),
                                     play,
                                     &data.teams.home.name.abbreviation,
                                     &data.teams.away.name.abbreviation,
-                                    &all_player_names,
-                                    EventType::WildPitch,
+                                    &live_feed.data.players,
+                                    simplified_event_type,
                                 )?;
-                                scoring_plays.push(wild_pitch.as_one_liner());
-                                Post::WildPitch(wild_pitch).send()?;
+                                writeln!(&mut scoring_plays, "{}", scoring_play_event.as_one_liner())?;
+                                scoring_play_event.send()?
                             },
-                            EventType::StolenBaseHome => {
-                                let stolen_home = ScoringPlayEvent::from_play(
-                                    (details, common),
-                                    play,
-                                    &data.teams.home.name.abbreviation,
-                                    &data.teams.away.name.abbreviation,
-                                    &all_player_names,
-                                    EventType::StolenBase,
-                                )?;
-                                scoring_plays.push(stolen_home.as_one_liner());
-                                Post::StolenHome(stolen_home).send()?;
-                            }
                             _ => {},
                         }
                     }
@@ -411,11 +387,8 @@ async fn posts_loop(
                 }
             }
             PlayStreamEvent::GameEnd(decisions, _, _, _stat_leaders) => {
-                let last_inning = linescore.innings.last().context("You gotta have at least one inning if the game is over")?.clone();
-                let walkoff = linescore.rhe_totals.home.runs > linescore.rhe_totals.away.runs
-                    && linescore.rhe_totals.home.runs
-                    - last_inning.inning_record.home.runs <= linescore.rhe_totals.away.runs;
-                let linescore_component = LineScore::new(linescore)?;
+                let last_inning_runs = linescore.innings.last().map(|inning| inning.inning_record.map(|rhe| rhe.runs)).unwrap_or_default();
+                let is_walkoff = linescore.rhe_totals.home.runs > linescore.rhe_totals.away.runs && linescore.rhe_totals.home.runs - last_inning_runs.home <= linescore.rhe_totals.away.runs;
 
                 if (linescore.rhe_totals.away.runs > linescore.rhe_totals.home.runs) ^ (cheering_for == TeamSide::Home) {
                     standings.win();
@@ -425,10 +398,26 @@ async fn posts_loop(
                     record.loss();
                 }
 
-                let pitching_masterpiece = TeamStatsLog::generate_masterpiece(&home, &away, innings.len(), &home.abbreviation).unwrap_or(String::new()) + &TeamStatsLog::generate_masterpiece(&away, &home, innings.len(), &away.abbreviation).unwrap_or(String::new());
-                let decisions = Decisions::new(decisions, boxscore);
-
-                Post::FinalCard(FinalCard::new(Score::from_stats_log(&home, &away, num_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }), (game_type != "P").then_some(standings), if game_type == "P" { "Series Against" } else { "Record Against" }, record, next_game, pitching_masterpiece, line_score, scoring_plays, decisions)).send()?;
+                FinalCard {
+                    score: Score::new(
+                        &data.teams.away.name.abbreviation,
+                        &linescore.rhe_totals.away.runs,
+                        &data.teams.home.name.abbreviation,
+                        &linescore.rhe_totals.home.runs,
+                        linescore.innings.len() as u8,
+                        TeamSide::Home, // does not matter
+                        BoldingDisplayKind::WinningTeam,
+                        if is_walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None },
+                    ),
+                    standings: (!data.game_type.is_postseason()).then_some(standings),
+                    record_text: if data.game_type.is_postseason() { "Series Against" } else { "Record Against" },
+                    record,
+                    next_game,
+                    pitching_masterpiece: PitchingMasterpiece::new(boxscore.teams.as_ref().choose(cheering_for), &our_abbreviation),
+                    linescore: LineScore::new(linescore, data.teams.as_ref())?,
+                    scoring_plays: scoring_plays.trim_end().to_owned(),
+                    decisions: Decisions::new(decisions, boxscore),
+                }.send()?;
                 
                 return Ok(())
             }
@@ -439,18 +428,18 @@ async fn posts_loop(
     }).await?;
 }
 
-fn lines(
+async fn lines(
     live_feed: &LiveFeedResponse,
     cheering_for: TeamSide,
-    game_pk: GameId,
     hitting_stats: [HittingStat; 2],
-) -> Result<(Lineup, Option<NextGame>, (PersonId, PersonId))> {
+) -> Result<(Lineup, Option<NextGame>)> {
     venue_hydrations! {
         struct VenueWithTimezone {
             timezone
         }
     }
 
+    let our_id = live_feed.data.teams.as_ref().choose(cheering_for).id;
     let HomeAway { home: (home_full, home_abbreviation), away: (away_full, away_abbreviation) } = live_feed.data.teams.as_ref().map(|team| (team.full_name.as_str(), team.name.abbreviation.as_str()));
 
     let datetime = TIMEZONE.from_utc_datetime(&*live_feed.data.datetime);
@@ -461,162 +450,94 @@ fn lines(
         format!("{} / {}", datetime.format("%H:%M %Z"), local_datetime.format("%H:%M %Z"))
     };
 
-    thread::scope(|s| {
-        let pitcher_future = s.spawn(|| get_pitcher_lines(live_feed, &home_abbreviation, &away_abbreviation));
+    let pitchers = get_pitcher_lines(live_feed, HomeAway::new(&home_abbreviation, &away_abbreviation));
 
-        let (previous_game, standings, record, next_game) = response_parsed_values(&live_feed, cheering_for, game_pk)?;
+    let (previous_game_id, standings, record, next_game) = response_parsed_values(&live_feed, cheering_for).await?;
+    let (previous, previous_game_team_with_game_data) = if let Some(game_id) = previous_game_id {
+        let live_feed = LiveFeedRequest::builder().id(game_id).build_and_get().await?;
+        let cheering_for = if live_feed.data.teams.home.id == our_id { TeamSide::Home } else { TeamSide::Away };
+        let HomeAway { home: home_runs, away: away_runs } = live_feed.live.linescore.rhe_totals.map(|totals| totals.runs);
+        let HomeAway { home: home_abbreviation, away: away_abbreviation } = live_feed.data.teams.as_ref().map(|team| modify_abbreviation(&team.name.abbreviation));
+        let last_inning_runs = live_feed.live.linescore.innings.last().map(|inning| inning.inning_record.map(|rhe| rhe.runs)).unwrap_or_default();
+        let innings = live_feed.live.linescore.innings.len();
+        let is_walkoff = innings >= 9 && home_runs > away_runs && home_runs - last_inning_runs.home <= away_runs;
+        let team_with_game_data = live_feed.live.boxscore.teams.choose(cheering_for);
+        (Some(Score::new(away_abbreviation, away_runs, home_abbreviation, home_runs, innings as u8, false, BoldingDisplayKind::WinningTeam, if is_walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None })), Some(team_with_game_data))
+    } else {
+        (None, None)
+    };
 
-        let (previous, previous_team_lineup) = if let Some(previous_game) = previous_game {
-            let home_runs = previous_game["liveData"]["boxscore"]["teams"]["home"]["teamStats"]["batting"]["runs"]
-                .as_i64()
-                .context("Home Team didn't have runs")? as usize;
-            let away_runs = previous_game["liveData"]["boxscore"]["teams"]["away"]["teamStats"]["batting"]["runs"]
-                .as_i64()
-                .context("Away Team didn't have runs")? as usize;
+    let title = match cheering_for {
+        TeamSide::Home => format!("{home_full} vs. {away_full}"),
+        TeamSide::Away => format!("{away_full} @ {home_full}"),
+    };
 
-            let (previous_home_abbreviation, previous_away_abbreviation) = (
-                modify_abbreviation(&previous_game["gameData"]["teams"]["home"])?,
-                modify_abbreviation(&previous_game["gameData"]["teams"]["away"])?,
-            );
-
-            let previous_innings = previous_game["liveData"]["linescore"]["innings"]
-                .as_array()
-                .context("Could not get innings")?
-                .len();
-
-            let walkoff = previous_innings >= 9 && home_runs > away_runs;
-
-            let previous_team_lineup = previous_game["liveData"]["boxscore"]["teams"][if cheering_for {
-                if previous_home_abbreviation == home_abbreviation {
-                    "home"
-                } else {
-                    "away"
-                }
-            } else {
-                if previous_away_abbreviation == away_abbreviation {
-                    "away"
-                } else {
-                    "home"
-                }
-            }].clone();
-            (Some(Score::new(previous_away_abbreviation, away_runs, previous_home_abbreviation, home_runs, previous_innings as u8, false, BoldingDisplayKind::WinningTeam, if walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None })), previous_team_lineup)
-        } else {
-            (None, Value::Null)
-        };
-
-        let title = if home {
-            format!("{home_full} vs. {away_full}")
-        } else {
-            format!("{away_full} @ {home_full}")
-        };
-
-        let ((away_pitcher_stats, away_pitcher_id), (home_pitcher_stats, home_pitcher_id)) = pitcher_future.join().ok().context("Pitcher lines thread panicked")??;
-
-        Ok((Lineup::new(
-            datetime,
-            title,
-            time,
-            previous,
-            record,
-            standings,
-            away_pitcher_stats,
-            home_pitcher_stats,
-            hitting_stats,
-            get_last_lineup_underscores(&previous_team_lineup)?,
-        ), next_game, (home_pitcher_id, away_pitcher_id)))
-    })
+    Ok((Lineup::new(
+        datetime,
+        title,
+        time,
+        previous,
+        record,
+        standings,
+        pitchers,
+        hitting_stats,
+        get_last_lineup_underscores(previous_game_team_with_game_data),
+    ), next_game))
 }
 
-fn response_parsed_values(
-    response: &Value,
-    home: bool,
-    game_id: i64,
-) -> Result<(Option<Value>, Standings, RecordAgainst, Option<NextGame>)> {
-    let (our_id, our_abbreviation) = (
-        response["gameData"]["teams"][if home { "home" } else { "away" }]["id"]
-            .as_i64()
-            .context("The selected team didn't have an id")?,
-        modify_abbreviation(&response["gameData"]["teams"][if home { "home" } else { "away" }])?,
-    );
-    let (their_id, their_abbreviation) = (
-        response["gameData"]["teams"][if home { "away" } else { "home" }]["id"]
-            .as_i64()
-            .context("The selected team didn't have an id")?,
-        modify_abbreviation(&response["gameData"]["teams"][if home { "away" } else { "home" }])?
-    );
-    let game_type = response["gameData"]["game"]["type"].as_str().context("Could not get game type")?;
+async fn response_parsed_values(live_feed: &LiveFeedResponse, cheering_for: TeamSide) -> Result<(Option<GameId>, Standings, RecordAgainst, Option<NextGame>)> {
+    let our_team = live_feed.data.teams.as_ref().choose(cheering_for);
+    let their_team = live_feed.data.teams.as_ref().choose(!cheering_for);
+    let game_type = live_feed.data.game_type;
+    let start_time = live_feed.data.datetime.datetime;
 
-    let all_games_root = get(&format!("https://statsapi.mlb.com/api/v1/schedule/games/?sportId=1&startDate={year}-01-01&endDate={year}-12-31&hydrate=venue(timezone)", year = Local::now().date_naive().year()))?;
-    let all_games = all_games_root["dates"].as_array().iter().flat_map(|x| x.iter()).flat_map(|game| game["games"].as_array()).flat_map(|x| x.iter()).filter(|game| (game["teams"]["home"]["team"]["id"].as_i64().is_some_and(|id| id == our_id) || game["teams"]["away"]["team"]["id"].as_i64().is_some_and(|id| id == our_id)) && game["gameType"].as_str().is_some_and(|r#type| r#type == game_type)).collect::<Vec<_>>();
+    let mut all_games = ScheduleRequest::<()>::builder()
+        .sport_id(SportId::MLB)
+        .date_range(NaiveDate::from_ymd_opt(start_time.year(), 1, 1).context("Valid date")?..=NaiveDate::from_ymd_opt(start_time.year(), 12, 31).context("Valid date")?)
+        // .game_type(game_type)
+        .team_id(our_team.id)
+        .build_and_get().await?
+        .dates.into_iter().flat_map(|date| date.games);
 
-    let previous_game_id = all_games.iter().rev().skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id)).skip(1).next().and_then(|game| game["gamePk"].as_i64());
-
-    let previous_game = if let Some(previous_game_id) = previous_game_id {
-        Some(get(&format!("https://statsapi.mlb.com/api/v1.1/game/{previous_game_id}/feed/live"))?)
-    } else {
-        None
-    };
-
-    let mut record = RecordAgainst::new(&our_abbreviation, &their_abbreviation);
+    let mut record = RecordAgainst::new(&our_team.name.abbreviation, &their_team.name.abbreviation);
     let mut standings = Standings::new();
-    let mut games_played = FxHashSet::<i64>::with_capacity_and_hasher(162, Default::default());
+    let mut games_played = FxHashSet::<GameId>::with_capacity_and_hasher(162, Default::default());
 
-    let next_game = if let Some(game) = all_games.iter()
-        .skip_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id))
-        .skip(1)
-        .next()
-        .map(|game| NextGame::new(game, our_id)) {
-        Some(game?)
-    } else {
-        None
-    };
-    for game in all_games
-        .iter()
-        .take_while(|game| game["gamePk"].as_i64().map_or(true, |id| id != game_id))
-        .filter(|game| game["status"]["codedGameState"].as_str() == Some("F"))
-        .filter(|game| game["gamePk"].as_i64().map_or(true, |id| games_played.insert(id))) {
-        let home_id = game["teams"]["home"]["team"]["id"]
-            .as_i64()
-            .context("Home Team didn't have an ID")?;
-        let away_id = game["teams"]["away"]["team"]["id"]
-            .as_i64()
-            .context("Away Team didn't have an ID")?;
-        let matchup = home_id == their_id || away_id == their_id;
-        let home_score = game["teams"]["home"]["score"].as_i64().unwrap_or(0);
-        let away_score = game["teams"]["away"]["score"].as_i64().unwrap_or(0);
+    let mut previous_game_id = None;
 
-        if home_score == away_score {
+    for game in all_games.by_ref().take_while(|game| game.game_date < start_time && game.status.abstract_game_code.is_finished()) {
+        if !games_played.insert(game.game_id) {
             continue
         }
 
-        if (home_score > away_score) ^ (home_id == our_id) {
-            if matchup { record.loss(); }
+        let Some(home_score) = game.teams.home.score else { continue };
+        let Some(away_score) = game.teams.away.score else { continue };
+
+        let is_matchup = game.teams.either(|team| team.id == their_team.id);
+        if (home_score.runs_scored > away_score.runs_scored) ^ (our_team.id == game.teams.home.team.id) {
+            if is_matchup { record.loss() }
             standings.loss();
         } else {
-            if matchup { record.win(); }
+            if is_matchup { record.win() }
             standings.win();
         }
+
+        previous_game_id = Some(game.game_id);
     }
 
-    Ok((previous_game, standings, record, next_game))
+    let next_game = if let Some(game) = all_games.skip_while(|game| game.game_date <= start_time).next() {
+        NextGame::new(game, our_team.id).await?
+    } else {
+        None
+    };
+
+    Ok((previous_game_id, standings, record, next_game))
 }
 
-pub fn get_pitcher_lines(
-    response: &live_feed::GameLiveFeed,
-    home_abbreviation: &str,
-    away_abbreviation: &str,
-) -> Result<((PitcherLineupEntry, PlayerId), (PitcherLineupEntry, PlayerId))> {
-    let Person { full_name: home_pitcher, id: home_pitcher_id } = &response.game_data.probable_pitchers.home;
-    let Person { full_name: away_pitcher, id: away_pitcher_id } = &response.game_data.probable_pitchers.away;
-
-    let (home_era, home_ip, home_hand) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{home_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
-    let (away_era, away_ip, away_hand) = pitching_stats(get(&format!("https://statsapi.mlb.com/api/v1/people/{away_pitcher_id}?hydrate=stats(group=[pitching],type=[gameLog])"))?)?;
-
-    let away_pitcher_stats = PitcherLineupEntry::new(away_pitcher.to_owned(), away_abbreviation.to_owned(), away_hand, away_era, away_ip);
-    let home_pitcher_stats = PitcherLineupEntry::new(home_pitcher.to_owned(), home_abbreviation.to_owned(), home_hand, home_era, home_ip);
-
-    Ok((
-        (away_pitcher_stats, *away_pitcher_id),
-        (home_pitcher_stats, *home_pitcher_id),
-    ))
+pub fn get_pitcher_lines(live_feed: &LiveFeedResponse, abbreviation: HomeAway<&str>) -> HomeAway<PitcherLineupEntry> {
+    live_feed.data.probable_pitchers.as_ref().map(|person| person.id).combine(abbreviation, |a, b| (a, b)).combine(live_feed.live.boxscore.teams.as_ref(), |(pitcher, abbreviation), team| {
+        let pitcher = &team.players[&pitcher];
+        let person = &live_feed.data.players[&pitcher];
+        PitcherLineupEntry::new(person.full_name.clone(), person.id, abbreviation.to_owned(), person.pitch_hand, era(pitcher.season_stats.pitching.earned_runs, pitcher.season_stats.pitching.innings_pitched), pitcher.season_stats.pitching.innings_pitched.unwrap_or_default())
+    })
 }

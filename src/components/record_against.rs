@@ -1,5 +1,6 @@
-use core::fmt::{Display, Formatter};
 use crate::util::statsapi::{BoldingDisplayKind, Score};
+use core::fmt::{Display, Formatter};
+use mlb_api::TeamSide;
 
 #[derive(Clone)]
 pub struct RecordAgainst {
@@ -15,12 +16,12 @@ impl RecordAgainst {
 
     pub fn win(&mut self) {
         self.inner.away_runs += 1;
-        self.inner.home_team_scored_most_recently = false;
+        self.inner.who_scored = TeamSide::Away;
     }
 
     pub fn loss(&mut self) {
         self.inner.home_runs += 1;
-        self.inner.home_team_scored_most_recently = true;
+        self.inner.who_scored = TeamSide::Home;
     }
 }
 

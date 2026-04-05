@@ -1,6 +1,6 @@
-use core::num::NonZeroUsize;
-use core::fmt::Formatter;
 use core::fmt::Display;
+use core::fmt::Formatter;
+use core::num::NonZeroUsize;
 
 #[derive(Clone)]
 pub struct Standings {

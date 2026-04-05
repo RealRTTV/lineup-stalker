@@ -1,9 +1,10 @@
-use std::fmt::{Display, Formatter};
-use anyhow::{Result, Context};
-use mlb_api::game::Boxscore;
+use anyhow::{Context, Result};
+use mlb_api::game::{Boxscore, PlayerWithGameData, TeamWithGameData};
 use mlb_api::stats::CountingStat;
-use mlb_api::stats::raw::pitching;
-use mlb_api::stats::wrappers::WithNone;
+use std::fmt::{Display, Formatter};
+use mlb_api::person::PersonId;
+use mlb_api::{HomeAway, TeamSide};
+use crate::posts::pitching_line::PitchingLine;
 
 #[derive(Clone)]
 pub struct Decisions {
@@ -14,16 +15,21 @@ pub struct Decisions {
 
 impl Decisions {
     pub fn new(decisions: &mlb_api::game::Decisions, boxscore: &Boxscore) -> Result<Self> {
-        let winner = boxscore.find_player_with_game_data(decisions.winner.as_ref().context("Expected a winner")?.id).context("Expected the winner to play in the game")?;
-        let loser = boxscore.find_player_with_game_data(decisions.loser.as_ref().context("Expected a loser")?.id).context("Expected the loser to play in the game")?;
-        
+        fn get_person_with_team(boxscore: &Boxscore, id: PersonId) -> Result<(&PlayerWithGameData, &TeamWithGameData)> {
+            let HomeAway { home, away } = boxscore.teams.as_ref().map(|team| team.players.get(&id).map(|player| (player, team)));
+            home.or(away).context("Expected the winner to play in the game")
+        }
+
+        let (winner, winners_team) = get_person_with_team(boxscore, decisions.winner.as_ref().context("Expected a winner")?.id)?;
+        let (loser, losers_team) = get_person_with_team(boxscore, decisions.loser.as_ref().context("Expected a loser")?.id)?;
+
         Ok(Self {
             winner: {
                 Win {
                     name: winner.boxscore_name.clone(),
                     wins: winner.season_stats.pitching.wins.unwrap_or_default(),
                     losses: winner.season_stats.pitching.losses.unwrap_or_default(),
-                    line: pitching_line(&winner.stats.pitching),
+                    line: PitchingLine::from_stats(&winner.stats.pitching, winners_team.pitchers.len() == 1, false),
                 }
             },
             loser: {
@@ -31,7 +37,7 @@ impl Decisions {
                     name: loser.boxscore_name.clone(),
                     wins: loser.season_stats.pitching.wins.unwrap_or_default(),
                     losses: loser.season_stats.pitching.losses.unwrap_or_default(),
-                    line: pitching_line(&loser.stats.pitching),
+                    line: PitchingLine::from_stats(&loser.stats.pitching, losers_team.pitchers.len() == 1, false),
                 }
             },
             save: {
@@ -39,7 +45,7 @@ impl Decisions {
                     Save {
                         name: closer.boxscore_name.clone(),
                         saves: closer.season_stats.pitching.saves.unwrap_or_default(),
-                        line: pitching_line(&closer.stats.pitching),
+                        line: PitchingLine::from_stats(&closer.stats.pitching, false, false),
                     }
                 })
             },
@@ -58,16 +64,8 @@ impl Display for Decisions {
     }
 }
 
-fn pitching_line(stats: &WithNone<pitching::__BoxscoreStatsData>) -> String {
-    let ip = stats.innings_pitched.unwrap_or_default();
-    let hits = stats.hits.unwrap_or_default();
-    let earned_runs = stats.earned_runs.unwrap_or_default();
-    let walks = stats.base_on_balls.unwrap_or_default();
-    let strikeouts = stats.strikeouts.unwrap_or_default();
-    let pitches = stats.number_of_pitches.unwrap_or_default();
-    let strikeout_surroundings = if strikeouts >= 12 { "__" } else { "" };
+fn pitching_line() -> PitchingLine {
 
-    format!("**{ip}** IP, **{hits}** H, **{earned_runs}** ER, **{walks}** BB, **{strikeout_surroundings}{strikeouts}** K{strikeout_surroundings}, **{pitches}** P")
 }
 
 #[derive(Clone)]
@@ -75,7 +73,7 @@ struct Win {
     name: String,
     wins: CountingStat,
     losses: CountingStat,
-    line: String,
+    line: PitchingLine,
 }
 
 impl Display for Win {
@@ -89,7 +87,7 @@ struct Loss {
     name: String,
     wins: CountingStat,
     losses: CountingStat,
-    line: String,
+    line: PitchingLine,
 }
 
 impl Display for Loss {
@@ -102,7 +100,7 @@ impl Display for Loss {
 struct Save {
     name: String,
     saves: CountingStat,
-    line: String,
+    line: PitchingLine,
 }
 
 impl Display for Save {

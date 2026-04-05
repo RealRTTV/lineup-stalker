@@ -1,9 +1,12 @@
-use std::fmt::{Debug, Display, Formatter};
-use anyhow::{Result, Context};
-use mlb_api::game::{Inning, InningHalf, Play};
-use mlb_api::meta::EventType;
 use crate::util::nth;
 use crate::util::statsapi::{BoldingDisplayKind, Score, ScoredRunner};
+use anyhow::{Context, Result};
+use mlb_api::game::{Inning, InningHalf, Play};
+use mlb_api::meta::EventType;
+use std::fmt::{Debug, Display, Formatter};
+use fxhash::FxHashMap;
+use mlb_api::person::{Ballplayer, PersonId};
+use crate::posts::Post;
 
 #[derive(Clone)]
 pub struct ScoringPlay {
@@ -21,7 +24,7 @@ impl ScoringPlay {
         play: &Play,
         home_abbreviation: &str,
         away_abbreviation: &str,
-        all_player_names: &[&str],
+        all_players: &FxHashMap<PersonId, Ballplayer<()>>,
     ) -> Result<Self> {
         let is_walkoff = play.about.inning_half == InningHalf::Bottom && *play.about.inning >= 9 && play.result.home_score > play.result.away_score;
         let details = play.result.completed_play_details.as_ref().context("Expected play to be complete")?;
@@ -32,19 +35,25 @@ impl ScoringPlay {
             outs: play.count.outs,
             score: Score::new(away_abbreviation.to_owned(), play.result.away_score, home_abbreviation.to_owned(), play.result.home_score, 0, play.about.inning_half.bats(), BoldingDisplayKind::MostRecentlyScored, if is_walkoff { BoldingDisplayKind::WinningTeam } else { BoldingDisplayKind::None }),
             rbi: details.rbi,
-            scores: ScoredRunner::from_description(&details.description, all_player_names),
+            scores: ScoredRunner::from_description(&details.description, all_players),
             event: details.event
         })
     }
 
-    pub fn as_one_liner(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    pub fn as_one_liner(&self) -> OneLiner {
+        OneLiner(self)
+    }
+}
+
+#[must_use]
+pub struct OneLiner<'a>(&'a ScoringPlay);
+
+impl Display for OneLiner<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
 
-        let Self { score, .. } = self;
-        let half = self.half.three_char();
-        let inning = nth(*self.inning);
-        write!(f, "{score} | {half} **{inning}**:", score = score.format_code_block())?;
-        for score in &self.scores {
+        write!(f, "{score} | {half} **{inning}**:", score = self.0.score.code_block(), half = self.0.half.three_char(), inning = nth(*self.0.inning))?;
+        for score in &self.0.scores {
             write!(f, " {score}")?;
         }
         Ok(())
@@ -132,3 +141,5 @@ impl Debug for ScoringPlay {
         Ok(())
     }
 }
+
+impl Post for ScoringPlay {}

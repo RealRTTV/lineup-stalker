@@ -1,21 +1,17 @@
+use crate::components::hitting::HitterLineupEntry;
+use crate::util::hide;
+use crate::util::stat::HittingStat;
+use anyhow::{Context, Result};
 use core::fmt::{Debug, Display, Formatter};
-use std::cmp::Ordering;
-use anyhow::{Result, Context, anyhow};
+use fxhash::FxHashMap;
 use mlb_api::game::{BattingOrderIndex, TeamWithGameData};
 use mlb_api::meta::GameType;
+use mlb_api::person::{Ballplayer, PersonId};
 use mlb_api::season::SeasonId;
+use mlb_api::team::TeamName;
 use mlb_api::{single_stat, HomeAway, TeamSide};
-use mlb_api::team::{Team, TeamName};
 use pollster::FutureExt;
-use serde_json::Value;
-use crate::posts::components::hitting::HitterLineupEntry;
-use crate::posts::components::team_stats_log::TeamStatsLog;
-use crate::responses::{live_feed, BattingOrderIndex};
-use crate::responses::live_feed::BoxscoreTeam;
-use crate::util::hide;
-use crate::util::hitting::HitterLineupEntry;
-use crate::util::stat::HittingStat;
-use crate::util::team_stats_log::TeamStatsLog;
+use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct ScoredRunner {
@@ -35,7 +31,7 @@ impl ScoredRunner {
         &self.play
     }
     
-    pub fn from_description(description: &str, all_player_names: &[&str]) -> Vec<Self> {
+    pub fn from_description(description: &str, all_players: &FxHashMap<PersonId, Ballplayer<()>>) -> Vec<Self> {
         let scores = description
             .split_once(": ")
             .map_or(description, |(_, x)| x);
@@ -59,10 +55,10 @@ impl ScoredRunner {
         let mut vec = Vec::new();
         while let Some(value) = iter.next() {
             // names with a . in them (ex: Vladimir Guerrero Jr.) are broken in the formatter, so it has to be patched
-            let value = if all_player_names.iter().any(|name| value == *name) && let Some(next) = iter.next() {
-                remap_score_event(&format!("{value} {next}"), all_player_names)
+            let value = if all_players.values().any(|player| value == player.full_name) && let Some(next) = iter.next() {
+                remap_score_event(&format!("{value} {next}"), all_players)
             } else {
-                remap_score_event(&value, all_player_names)
+                remap_score_event(&value, all_players)
             };
 
             let scoring = value.contains("scores.") || value.contains("homers") || value.contains("home run") || value.contains("grand slam");
@@ -116,14 +112,14 @@ impl BoldingDisplayKind {
 
 #[derive(Clone)]
 pub struct Score {
-    away_abbreviation: String,
+    pub away_abbreviation: String,
     pub away_runs: usize,
-    home_abbreviation: String,
+    pub home_abbreviation: String,
     pub home_runs: usize,
-    innings: u8,
+    pub innings: u8,
     pub who_scored: TeamSide,
-    runs_bolding: BoldingDisplayKind,
-    team_bolding: BoldingDisplayKind,
+    pub runs_bolding: BoldingDisplayKind,
+    pub team_bolding: BoldingDisplayKind,
 }
 
 impl Score {
@@ -147,10 +143,19 @@ impl Score {
         }
     }
 
-    pub fn format_code_block(&self) -> String {
-        let Self { away_abbreviation, away_runs, home_abbreviation, home_runs, who_scored, .. } = self;
-        let (home_bold, away_bold) = HomeAway::new(("**", ""), ("", "**")).choose(self.who_scored);
-        format!("{away_bold}`{away_abbreviation} {away_runs}`{away_bold} - {home_bold}`{home_abbreviation} {home_runs}`{home_bold}")
+    pub fn code_block(&self) -> CodeBlock {
+        CodeBlock(self)
+    }
+}
+
+#[must_use]
+pub struct CodeBlock<'a>(&'a Score);
+
+impl Display for CodeBlock<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Score { away_abbreviation, away_runs, home_abbreviation, home_runs, who_scored, .. } = self.0;
+        let (home_bold, away_bold) = HomeAway::new(("**", ""), ("", "**")).choose(*who_scored);
+        write!(f, "{away_bold}`{away_abbreviation} {away_runs}`{away_bold} - {home_bold}`{home_abbreviation} {home_runs}`{home_bold}")
     }
 }
 
@@ -190,17 +195,17 @@ pub fn modify_abbreviation(name: &TeamName) -> String {
     acronym
 }
 
-pub fn get_last_lineup_underscores(previous_lineup: &Value) -> Result<[HitterLineupEntry; 9]> {
-    let default_batting_order = vec![hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")];
-    let players = &previous_lineup["players"];
-    let vec = match previous_lineup["battingOrder"].as_array() {
-        Some(iter) => iter.iter().filter_map(|id| id.as_i64()).filter_map(|x| players[&format!("ID{x}")]["person"]["fullName"].as_str()).map(hide).collect::<Vec<String>>(),
-        None => default_batting_order.clone(),
-    };
-    let lineup = if vec.len() == 9 { vec } else { default_batting_order };
-    let lineup = lineup.into_iter().enumerate().map(|(idx, name)| HitterLineupEntry::new(name, "__".to_owned(), idx as u8 + 1, None)).collect::<Vec<_>>();
-    let [a, b, c, d, e, f, g, h, i] = lineup.as_slice() else { return Err(anyhow!("Batting order was not 9 batters in length")) };
-    Ok([a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), f.clone(), g.clone(), h.clone(), i.clone()])
+pub fn get_last_lineup_underscores(previous_lineup: &TeamWithGameData) -> [HitterLineupEntry; 9] {
+    let players = &previous_lineup.players;
+    let mut idx = 1;
+    previous_lineup.batting_order.map_or_else(
+        || [hide("Babe Ruth"), hide("Shohei Ohtani"), hide("Kevin Gausman"), hide("Barry Bonds"), hide("Ronald Acuña Jr."), hide("Mariano Rivera"), hide("Jacob deGrom"), hide("Ichiro Suzuki"), hide("Dave Stieb")],
+        |id| hide(&players[&id].person.full_name)
+    ).map(|name| {
+        let entry = HitterLineupEntry::new(name, None, BattingOrderIndex { major: idx, minor: 0 }, None);
+        idx += 1;
+        entry
+    })
 }
 
 pub fn lineup(team: &TeamWithGameData, stats: [HittingStat; 2], show_stats: bool, season: SeasonId) -> Result<[HitterLineupEntry; 9]> {
@@ -214,8 +219,8 @@ pub fn lineup(team: &TeamWithGameData, stats: [HittingStat; 2], show_stats: bool
             let id = person.id;
             async move || single_stat!(Sabermetrics + Hitting for id; with |builder| builder.season(season)).await
         };
-        let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.stats.hitting, sabermetrics_stats).block_on())?) } else { None };
-        players[batting_order.major - 1] = Some(HitterLineupEntry::new(name.to_owned(), position, batting_order, stats));
+        let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.stats.hitting, sabermetrics_stats)).map(|future| future.block_on())) } else { None };
+        players[batting_order.major - 1] = Some(HitterLineupEntry::new(name.to_owned(), Some(position), batting_order, stats));
     }
     Ok(players.into_iter().collect::<Option<Vec<HitterLineupEntry>>>().context("Hitter was missing from lineup")?.try_into()?)
 }
@@ -224,7 +229,7 @@ pub fn should_show_stats(game_type: GameType) -> bool {
     matches!(game_type, GameType::RegularSeason) || game_type.is_postseason()
 }
 
-pub fn remap_score_event(event: &str, all_player_names: &[&str]) -> String {
+pub fn remap_score_event(event: &str, all_players: &FxHashMap<PersonId, Ballplayer<()>>) -> String {
     fn remove_prefix<'a>(s: &'a str, prefixes: impl Iterator<Item = &'a str>) -> Option<&'a str> {
         for prefix in prefixes {
             if let Some(s) = s.strip_prefix(prefix) {
@@ -246,31 +251,31 @@ pub fn remap_score_event(event: &str, all_player_names: &[&str]) -> String {
 
     loop {
         event = if let Some((left, right)) = event.split_once(" left fielder") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} left field{right}")
         } else if let Some((left, right)) = event.split_once(" center fielder") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} center field{right}")
         } else if let Some((left, right)) = event.split_once(" right fielder") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} right field{right}")
         } else if let Some((left, right)) = event.split_once(" first baseman") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} first base{right}")
         } else if let Some((left, right)) = event.split_once(" second baseman") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} second base{right}")
         } else if let Some((left, right)) = event.split_once(" third baseman") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} third base{right}")
         } else if let Some((left, right)) = event.split_once(" catcher") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} catcher{right}")
         } else if let Some((left, right)) = event.split_once(" pitcher") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} pitcher{right}")
         } else if let Some((left, right)) = event.split_once(" shortstop") {
-            let Some(right) = remove_prefix(right.trim_start(), all_player_names.iter().map(String::as_str)) else { break; };
+            let Some(right) = remove_prefix(right.trim_start(), all_players.values().map(|player| player.full_name.as_str())) else { break; };
             format!("{left} shortstop{right}")
         } else {
             break;

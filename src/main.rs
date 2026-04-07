@@ -12,7 +12,7 @@ use crate::posts::Post;
 use crate::util::ffi::{self};
 use crate::util::stat::HittingStat;
 use crate::util::statsapi::{get_last_lineup_underscores, stalker_abbreviation, BoldingDisplayKind, Score};
-use crate::util::{clear_screen, get_team_color_escape, statsapi};
+use crate::util::{clear_screen, get_team_color_escape, hide, statsapi};
 use anyhow::{bail, Context, Result};
 use chrono::{Datelike, Local, NaiveDate};
 use chrono_tz::Tz;
@@ -532,7 +532,11 @@ async fn feed_parsed_values(live_feed: &LiveFeedResponse, cheering_for: TeamSide
 }
 
 pub fn get_pitcher_lines(live_feed: &LiveFeedResponse, abbreviation: HomeAway<String>) -> HomeAway<PitcherLineupEntry> {
-    live_feed.data.probable_pitchers.as_ref().map(|person| person.id).zip(abbreviation).zip(live_feed.live.boxscore.teams.as_ref()).map(|((id, abbreviation), team)| {
+    let Some(probable_pitchers) = live_feed.data.probable_pitchers.as_ref() else {
+        return HomeAway::new(PitcherLineupEntry::unknown(hide("_____ _______")), PitcherLineupEntry::unknown(hide("______ ______")))
+    };
+
+    probable_pitchers.as_ref().map(|person| person.id).zip(abbreviation).zip(live_feed.live.boxscore.teams.as_ref()).map(|((id, abbreviation), team)| {
         let pitcher = &team.players[&id];
         let person = &live_feed.data.players[&id];
         PitcherLineupEntry::new(person.full_name.clone(), person.id, abbreviation, person.pitch_hand, era(pitcher.season_stats.pitching.earned_runs, pitcher.season_stats.pitching.innings_pitched), pitcher.season_stats.pitching.innings_pitched.unwrap_or_default())

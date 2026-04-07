@@ -828,7 +828,7 @@ checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 
 [[package]]
 name = "lineup-stalker"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "bon",
@@ -839,7 +839,6 @@ dependencies = [
  "mlb-api",
  "pollster",
  "serde",
- "serde_json",
  "tokio",
  "tokio-macros",
  "winres",
@@ -912,9 +911,9 @@ dependencies = [
 
 [[package]]
 name = "mlb-api"
-version = "1.0.0"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb4f05e9d600ba4d4160dd176e6a55c1ca55e2fe30520ae75a6b2168922c13e"
+checksum = "5ac08bc32e97a83002bacf753dd65bf61d894c76ae94330de8deadd98853cd4c"
 dependencies = [
  "bon",
  "chrono",

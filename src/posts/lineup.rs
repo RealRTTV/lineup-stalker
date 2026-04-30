@@ -18,7 +18,7 @@ pub struct Lineup {
     previous: Option<Score>,
     pub record: RecordAgainst,
     pub standings: Standings,
-    pitchers: HomeAway<PitcherLineupEntry>,
+    probable_pitchers: HomeAway<PitcherLineupEntry>,
     hitting_stats: [HittingStat; 2],
     lineup: [HitterLineupEntry; 9],
 }
@@ -42,10 +42,14 @@ impl Lineup {
             previous,
             record,
             standings,
-            pitchers,
+            probable_pitchers: pitchers,
             hitting_stats,
             lineup,
         }
+    }
+    
+    pub fn update_probable_pitchers(&mut self, probable_pitchers: HomeAway<PitcherLineupEntry>) {
+        self.probable_pitchers = probable_pitchers;
     }
 
     pub fn update_lineup(&mut self, lineup: [HitterLineupEntry; 9]) {
@@ -55,7 +59,7 @@ impl Lineup {
 
 impl Display for Lineup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { datetime, title, time, previous, record, standings, pitchers, hitting_stats: [first_stat, second_stat], lineup } = self;
+        let Self { datetime, title, time, previous, record, standings, probable_pitchers: pitchers, hitting_stats: [first_stat, second_stat], lineup } = self;
 
         writeln!(f, "# {} {title}", datetime.format("%m*|*%d*|*%y"))?;
         writeln!(f, "First Pitch: {time}")?;

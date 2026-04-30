@@ -27,38 +27,39 @@ impl LineScore {
             write!(
                 &mut away_linescore,
                 "|{n: ^3}",
-                n = inning.inning_record.away.runs,
+                n = if inning.inning_record.away.was_inning_half_played {
+                    inning.inning_record.away.runs.to_string()
+                } else {
+                    "-".to_owned()
+                },
             )?;
             write!(
                 &mut home_linescore,
                 "|{n: ^3}",
                 n = if inning.inning_record.home.was_inning_half_played {
-                    "-".to_owned()
-                } else {
                     inning.inning_record.home.runs.to_string()
+                } else {
+                    "-".to_owned()
                 }
             )?;
         }
-        let runs_width = u32::max(linescore.rhe_totals.home.runs.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.runs.checked_ilog10().map_or(1, |x| x + 1)) as usize;
-        let hits_width = u32::max(linescore.rhe_totals.home.hits.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.hits.checked_ilog10().map_or(1, |x| x + 1)) as usize;
-        let errors_width = u32::max(linescore.rhe_totals.home.errors.checked_ilog10().map_or(1, |x| x + 1), linescore.rhe_totals.away.errors.checked_ilog10().map_or(1, |x| x + 1)) as usize;
         write!(
             &mut header,
-            "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`**",
+            "||{r: ^3}|{h: ^3}|{e: ^3}|`**",
             r = "R",
             h = "H",
             e = "E",
         )?;
         write!(
             &mut away_linescore,
-            "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`",
+            "||{r: ^3}|{h: ^3}|{e: ^3}|`",
             r = linescore.rhe_totals.away.runs,
             h = linescore.rhe_totals.away.hits,
             e = linescore.rhe_totals.away.errors
         )?;
         write!(
             &mut home_linescore,
-            "|| {r: >runs_width$} | {h: >hits_width$} | {e: >errors_width$} |`",
+            "||{r: ^3}|{h: ^3}|{e: ^3}|`",
             r = linescore.rhe_totals.home.runs,
             h = linescore.rhe_totals.home.hits,
             e = linescore.rhe_totals.home.errors

@@ -1,10 +1,10 @@
 use crate::components::hitting::HitterLineupEntry;
 use crate::util::hide;
 use crate::util::stat::HittingStat;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use core::fmt::{Debug, Display, Formatter};
 use fxhash::FxHashMap;
-use mlb_api::game::{BattingOrderIndex, TeamWithGameData};
+use mlb_api::game::{BattingOrderIndex, LiveFeedResponse, TeamWithGameData};
 use mlb_api::meta::GameType;
 use mlb_api::person::{Ballplayer, PersonId};
 use mlb_api::season::SeasonId;
@@ -12,6 +12,8 @@ use mlb_api::team::TeamName;
 use mlb_api::{single_stat, HomeAway, TeamSide};
 use pollster::FutureExt;
 use std::cmp::Ordering;
+use mlb_api::stats::derived::era;
+use crate::components::pitching::PitcherLineupEntry;
 
 #[derive(Clone)]
 pub struct ScoredRunner {
@@ -112,7 +114,7 @@ impl BoldingDisplayKind {
                 Ordering::Equal => (NONE, NONE),
                 Ordering::Greater => (BOLD, NONE),
             }
-            Self::MostRecentlyScored => HomeAway::new((NONE, BOLD), (BOLD, NONE)).choose(who_scored),
+            Self::MostRecentlyScored => if home_runs == away_runs { (NONE, NONE) } else { HomeAway::new((NONE, BOLD), (BOLD, NONE)).choose(who_scored) },
         }
     }
 }
@@ -246,7 +248,7 @@ pub fn lineup(team: &TeamWithGameData, stats: [HittingStat; 2], show_stats: bool
                 let id = person.id;
                 async move || single_stat!(Sabermetrics + Hitting for id; with |builder| builder.season(season)).await
             };
-            let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.game_stats.hitting, sabermetrics_stats)).map(|future| future.block_on())) } else { None };
+            let stats = if show_stats { Some(stats.map(|stat| stat.get(&player.season_stats.hitting, sabermetrics_stats)).map(|future| future.block_on())) } else { None };
             let entry = HitterLineupEntry::new(name.to_owned(), Some(position), BattingOrderIndex { major: idx + 1, minor: 0 }, stats);
             idx += 1;
             entry
@@ -311,4 +313,14 @@ pub fn remap_score_event(event: &str, all_players: &FxHashMap<PersonId, Ballplay
     }
 
     event.replace("1st", "first").replace("2nd", "second").replace("3rd", "third")
+}
+
+pub fn probable_pitchers(live_feed: &LiveFeedResponse) -> Result<HomeAway<PitcherLineupEntry>> {
+    let HomeAway { home: Some(home), away: Some(away) } = live_feed.data.probable_pitchers.as_ref() else { bail!("Expected probable pitchers") };
+
+    Ok(HomeAway::new(home, away).zip(live_feed.data.teams.as_ref().map(|team| stalker_abbreviation(&team.name))).zip(live_feed.live.boxscore.teams.as_ref()).map(|((person, abbreviation), team)| {
+        let pitcher = &team.players[&person.id];
+        let person = &live_feed.data.players[&person.id];
+        PitcherLineupEntry::new(person.full_name.clone(), person.id, abbreviation, person.pitch_hand, era(pitcher.season_stats.pitching.earned_runs, pitcher.season_stats.pitching.innings_pitched), pitcher.season_stats.pitching.innings_pitched.unwrap_or_default())
+    }))
 }

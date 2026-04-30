@@ -20,7 +20,6 @@ use chrono_tz::Tz::America__Toronto;
 use components::decisions::Decisions;
 use components::linescore::LineScore;
 use components::next_game::NextGame;
-use components::pitching::PitcherLineupEntry;
 use components::record_against::RecordAgainst;
 use components::standings::Standings;
 use fxhash::FxHashSet;
@@ -30,9 +29,9 @@ use mlb_api::person::PersonId;
 use mlb_api::request::RequestURLBuilderExt;
 use mlb_api::schedule::{ScheduleGame, ScheduleRequest};
 use mlb_api::sport::SportId;
-use mlb_api::stats::derived::era;
 use mlb_api::venue::VenuesRequest;
 use mlb_api::{venue_hydrations, HomeAway, TeamSide};
+use crate::components::pitching::PitcherLineupEntry;
 
 pub const TIMEZONE: Tz = America__Toronto;
 
@@ -71,7 +70,7 @@ async fn main() {
 }
 
 async fn main0() -> Result<()> {
-    pub async fn await_filled_batting_order(live_feed: Result<LiveFeedResponse, GameId>, cheering_for: TeamSide) -> Result<LiveFeedResponse> {
+    pub async fn await_predicate(live_feed: Result<LiveFeedResponse, GameId>, mut predicate: impl FnMut(&LiveFeedResponse) -> bool) -> Result<LiveFeedResponse> {
         let mut dots = 0;
         ffi::set_cursor_visible(false);
 
@@ -81,15 +80,15 @@ async fn main0() -> Result<()> {
         };
 
         loop {
-            if live_feed.live.boxscore.teams.as_ref().choose(cheering_for).batting_order.is_none() {
+            if predicate(&live_feed) {
+                println!("         ");
+                break;
+            } else {
                 print!("\rLoading{: <pad$}", ".".repeat(dots + 1), pad = 3 - dots);
                 ffi::flush();
                 dots = (dots + 1) % 3;
                 live_feed = LiveFeedRequest::builder().id(live_feed.id).build_and_get().await?;
                 tokio::time::sleep(Duration::new(live_feed.meta.recommended_poll_rate as _, 0)).await;
-            } else {
-                println!("         ");
-                break;
             }
         }
         ffi::set_cursor_visible(true);
@@ -102,11 +101,19 @@ async fn main0() -> Result<()> {
     let mut live_feed: LiveFeedResponse = LiveFeedRequest::builder().id(game_id).build_and_get().await?;
     let (mut lineup_post, next_game) = lines(&live_feed, cheering_for, stats).await?;
     lineup_post.send_with_settings(true, true, true)?;
-    live_feed = await_filled_batting_order(Ok(live_feed), cheering_for).await?;
+
+    live_feed = await_predicate(Ok(live_feed), |live_feed| live_feed.data.probable_pitchers.as_ref().both(Option::is_some)).await?;
+    ffi::set_cursor(0, 0);
+    let probable_pitchers = statsapi::probable_pitchers(&live_feed)?;
+    lineup_post.update_probable_pitchers(probable_pitchers);
+    lineup_post.send()?;
+
+    live_feed = await_predicate(Ok(live_feed), |live_feed| live_feed.live.boxscore.teams.as_ref().choose(cheering_for).batting_order.is_some()).await?;
     ffi::set_cursor(0, 0);
     let lineup = statsapi::lineup(live_feed.live.boxscore.teams.as_ref().choose(cheering_for), stats, statsapi::should_show_stats(live_feed.data.game_type), live_feed.data.season)?;
     lineup_post.update_lineup(lineup);
     lineup_post.send()?;
+
     posts(
         live_feed,
         cheering_for,
@@ -369,8 +376,8 @@ async fn posts(
                                 let scoring_play_event = ScoringPlayEvent::from_play(
                                     (details, common),
                                     play,
-                                    &data.teams.home.name.abbreviation,
-                                    &data.teams.away.name.abbreviation,
+                                    &stalker_abbreviation(&data.teams.home.name),
+                                    &stalker_abbreviation(&data.teams.away.name),
                                     &data.players,
                                     simplified_event_type,
                                 );
@@ -436,7 +443,6 @@ async fn lines(
 
     let our_id = live_feed.data.teams.as_ref().choose(cheering_for).id;
     let HomeAway { home: home_full, away: away_full } = live_feed.data.teams.as_ref().map(|team| team.full_name.as_str());
-    let abbreviation = live_feed.data.teams.as_ref().map(|team| stalker_abbreviation(&team.name));
 
     let datetime = live_feed.data.datetime.datetime.with_timezone(&TIMEZONE);
     let local_datetime = live_feed.data.datetime.datetime.with_timezone(&VenuesRequest::<VenueWithTimezone>::builder().venue_ids(vec![live_feed.data.venue.id]).build_and_get().await?.venues[0].extras.timezone.timezone);
@@ -445,8 +451,6 @@ async fn lines(
     } else {
         format!("{} / {}", datetime.format("%H:%M %Z"), local_datetime.format("%H:%M %Z"))
     };
-
-    let pitchers = get_pitcher_lines(live_feed, abbreviation);
 
     let (previous_game_id, standings, record, next_game) = feed_parsed_values(live_feed, cheering_for).await?;
     let (previous, previous_game_team_with_game_data) = if let Some(game_id) = previous_game_id {
@@ -475,7 +479,7 @@ async fn lines(
         previous,
         record,
         standings,
-        pitchers,
+        HomeAway::new(PitcherLineupEntry::unknown(hide("_____ _______")), PitcherLineupEntry::unknown(hide("_____ _______"))),
         hitting_stats,
         get_last_lineup_underscores(previous_game_team_with_game_data),
     ), next_game))
@@ -529,16 +533,4 @@ async fn feed_parsed_values(live_feed: &LiveFeedResponse, cheering_for: TeamSide
     };
 
     Ok((previous_game_id, standings, record, next_game))
-}
-
-pub fn get_pitcher_lines(live_feed: &LiveFeedResponse, abbreviation: HomeAway<String>) -> HomeAway<PitcherLineupEntry> {
-    let Some(probable_pitchers) = live_feed.data.probable_pitchers.as_ref() else {
-        return HomeAway::new(PitcherLineupEntry::unknown(hide("_____ _______")), PitcherLineupEntry::unknown(hide("______ ______")))
-    };
-
-    probable_pitchers.as_ref().map(|person| person.id).zip(abbreviation).zip(live_feed.live.boxscore.teams.as_ref()).map(|((id, abbreviation), team)| {
-        let pitcher = &team.players[&id];
-        let person = &live_feed.data.players[&id];
-        PitcherLineupEntry::new(person.full_name.clone(), person.id, abbreviation, person.pitch_hand, era(pitcher.season_stats.pitching.earned_runs, pitcher.season_stats.pitching.innings_pitched), pitcher.season_stats.pitching.innings_pitched.unwrap_or_default())
-    })
 }
